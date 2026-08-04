@@ -11,17 +11,36 @@ const asyncHandler = require('../middleware/asyncHandler');
 router.use(requireAdmin);
 
 router.get('/shops', asyncHandler(async (req, res) => {
-  const shops = await Shop.find();
+  const shops = await Shop.find().populate('ownerId', 'name email');
   res.json(shops);
 }));
 
+const SHOP_FIELDS = ['name', 'description', 'isOpen', 'estimatedPrepTime', 'minOrder', 'ownerEmail', 'categories'];
+
+const buildShopPayload = async (body) => {
+  const payload = {};
+  for (const field of SHOP_FIELDS) {
+    if (body[field] !== undefined) payload[field] = body[field];
+  }
+  if (payload.ownerEmail) {
+    payload.ownerEmail = payload.ownerEmail.trim().toLowerCase();
+    const owner = await User.findOne({ email: payload.ownerEmail });
+    payload.ownerId = owner ? owner._id : null;
+  } else if (payload.ownerEmail === '') {
+    payload.ownerId = null;
+  }
+  return payload;
+};
+
 router.post('/shops', asyncHandler(async (req, res) => {
-  const shop = await Shop.create(req.body);
+  const payload = await buildShopPayload(req.body);
+  const shop = await Shop.create(payload);
   res.status(201).json(shop);
 }));
 
 router.patch('/shops/:id', asyncHandler(async (req, res) => {
-  const shop = await Shop.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  const payload = await buildShopPayload(req.body);
+  const shop = await Shop.findByIdAndUpdate(req.params.id, payload, { new: true }).populate('ownerId', 'name email');
   res.json(shop);
 }));
 

@@ -18,7 +18,11 @@ passport.use(new GoogleStrategy({
       let user = await User.findOne({ googleId: profile.id });
       if (!user) {
         let role = 'student';
-        if (profile.emails[0].value === process.env.ADMIN_EMAIL) {
+        const adminEmails = (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
+          .split(',')
+          .map(e => e.trim().toLowerCase())
+          .filter(Boolean);
+        if (adminEmails.includes(profile.emails[0].value.toLowerCase())) {
           role = 'admin';
         }
         user = await User.create({
@@ -28,6 +32,16 @@ passport.use(new GoogleStrategy({
           avatar: profile.photos[0]?.value,
           role
         });
+      } else {
+        const adminEmails = (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
+          .split(',')
+          .map(e => e.trim().toLowerCase())
+          .filter(Boolean);
+        const shouldBeAdmin = adminEmails.includes(user.email.toLowerCase());
+        if (shouldBeAdmin && user.role !== 'admin') {
+          user.role = 'admin';
+          await user.save();
+        }
       }
       return done(null, user);
     } catch (err) {
