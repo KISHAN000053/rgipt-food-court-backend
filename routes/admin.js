@@ -166,30 +166,52 @@ router.get('/analytics', asyncHandler(async (req, res) => {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  const orders = await Order.find({ createdAt: { $gte: startOfDay } });
-  
-  const statusCounts = orders.reduce((acc, order) => {
+  const todaysOrders = await Order.find({ createdAt: { $gte: startOfDay } });
+
+  const statusCounts = todaysOrders.reduce((acc, order) => {
     acc[order.status] = (acc[order.status] || 0) + 1;
     return acc;
   }, {});
 
-  const revenue = orders.filter(o => o.status !== 'cancelled').reduce((acc, order) => acc + order.total, 0);
-  
   const itemCounts = {};
-  for (const order of orders) {
+  for (const order of todaysOrders) {
     if (order.status !== 'cancelled') {
       for (const item of order.items) {
         itemCounts[item.name] = (itemCounts[item.name] || 0) + item.quantity;
       }
     }
   }
-  
+
   const popularItems = Object.entries(itemCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
     .map(([name, count]) => ({ name, count }));
 
-  res.json({ statusCounts, revenue, popularItems });
+  // All-time totals for the dashboard cards.
+  const [revenueAgg, totalOrders, totalUsers, totalShops] = await Promise.all([
+    Order.aggregate([
+      { $match: { status: { $ne: 'cancelled' } } },
+      { $group: { _id: null, sum: { $sum: '$total' } } }
+    ]),
+    Order.countDocuments({ status: { $ne: 'cancelled' } }),
+    User.countDocuments(),
+    Shop.countDocuments({ isPermanentlyClosed: false }),
+  ]);
+
+  const totalRevenue = Math.round((revenueAgg[0]?.sum || 0) * 100) / 100;
+  const todaysRevenue = Math.round(
+    todaysOrders.filter(o => o.status !== 'cancelled').reduce((acc, o) => acc + o.total, 0) * 100
+  ) / 100;
+
+  res.json({
+    totalRevenue,
+    totalOrders,
+    totalUsers,
+    totalShops,
+    todaysRevenue,
+    statusCounts,
+    popularItems,
+  });
 }));
 
 module.exports = router;

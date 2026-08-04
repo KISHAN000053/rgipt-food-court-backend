@@ -67,11 +67,44 @@ router.get('/menu', asyncHandler(async (req, res) => {
   res.json(items);
 }));
 
+const MENU_FIELDS = ['name', 'price', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled'];
+
+const buildMenuPayload = (body) => {
+  const payload = {};
+  for (const field of MENU_FIELDS) {
+    if (body[field] !== undefined) payload[field] = body[field];
+  }
+  return payload;
+};
+
+router.post('/menu', asyncHandler(async (req, res) => {
+  const payload = buildMenuPayload(req.body);
+  if (!payload.name || payload.price === undefined || !payload.category) {
+    return res.status(400).json({ message: 'Name, price and category are required' });
+  }
+  if (Number(payload.price) < 0) {
+    return res.status(400).json({ message: 'Price cannot be negative' });
+  }
+  const item = await MenuItem.create({ ...payload, shop: req.shop._id });
+  res.status(201).json(item);
+}));
+
+router.delete('/menu/:itemId', asyncHandler(async (req, res) => {
+  const item = await MenuItem.findOneAndDelete({ _id: req.params.itemId, shop: req.shop._id });
+  if (!item) {
+    return res.status(404).json({ message: 'Menu item not found' });
+  }
+  res.json({ message: 'Menu item deleted' });
+}));
+
 router.patch('/menu/:itemId', asyncHandler(async (req, res) => {
-  const { isAvailable, isEnabled, price } = req.body;
+  const payload = buildMenuPayload(req.body);
+  if (payload.price !== undefined && Number(payload.price) < 0) {
+    return res.status(400).json({ message: 'Price cannot be negative' });
+  }
   const item = await MenuItem.findOneAndUpdate(
     { _id: req.params.itemId, shop: req.shop._id },
-    { isAvailable, isEnabled, price },
+    payload,
     { new: true }
   );
   
