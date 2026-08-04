@@ -9,6 +9,8 @@ const userSchema = new mongoose.Schema({
   roomNumber: String,
   phone: String,
   isOnboarded: { type: Boolean, default: false },
+  acceptedTerms: { type: Boolean, default: false },
+  acceptedTermsAt: Date,
   role: { type: String, enum: ['student', 'admin'], default: 'student' },
 }, { timestamps: true });
 

@@ -5,10 +5,82 @@ const MenuItem = require('../models/MenuItem');
 const User = require('../models/User');
 const Order = require('../models/Order');
 const Announcement = require('../models/Announcement');
+const Settings = require('../models/Settings');
 const { requireAdmin } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(requireAdmin);
+
+router.get('/payouts', asyncHandler(async (req, res) => {
+  // Owed to each shop = sum of basePrice*quantity (their own set prices) across all
+  // non-cancelled orders. This deliberately excludes the platform markup and service
+  // fee — those are platform revenue, not the shop's money.
+  const payouts = await Order.aggregate([
+    { $match: { status: { $ne: 'cancelled' } } },
+    { $unwind: '$items' },
+    {
+      $group: {
+        _id: '$shop',
+        amountOwed: { $sum: { $multiply: ['$items.basePrice', '$items.quantity'] } },
+        amountCollectedFromStudents: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
+        orderIds: { $addToSet: '$_id' },
+      }
+    },
+    { $lookup: { from: 'shops', localField: '_id', foreignField: '_id', as: 'shop' } },
+    { $unwind: '$shop' },
+    {
+      $project: {
+        _id: 0,
+        shopId: '$_id',
+        shopName: '$shop.name',
+        amountOwed: { $round: ['$amountOwed', 2] },
+        amountCollectedFromStudents: { $round: ['$amountCollectedFromStudents', 2] },
+        platformMarkupRevenue: { $round: [{ $subtract: ['$amountCollectedFromStudents', '$amountOwed'] }, 2] },
+        orderCount: { $size: '$orderIds' },
+      }
+    },
+    { $sort: { shopName: 1 } }
+  ]);
+
+  const serviceFeeAgg = await Order.aggregate([
+    { $match: { status: { $ne: 'cancelled' } } },
+    { $group: { _id: null, totalServiceFees: { $sum: '$serviceFee' } } }
+  ]);
+  const totalServiceFees = Math.round((serviceFeeAgg[0]?.totalServiceFees || 0) * 100) / 100;
+  const totalMarkupRevenue = Math.round(payouts.reduce((sum, p) => sum + p.platformMarkupRevenue, 0) * 100) / 100;
+
+  res.json({
+    payouts,
+    summary: {
+      totalOwedToShops: Math.round(payouts.reduce((sum, p) => sum + p.amountOwed, 0) * 100) / 100,
+      totalPlatformRevenue: Math.round((totalMarkupRevenue + totalServiceFees) * 100) / 100,
+      totalMarkupRevenue,
+      totalServiceFees,
+    }
+  });
+}));
+
+router.get('/settings', asyncHandler(async (req, res) => {
+  const settings = await Settings.getGlobal();
+  res.json(settings);
+}));
+
+router.patch('/settings', asyncHandler(async (req, res) => {
+  const { razorpaySurchargePercent, serviceFee } = req.body;
+  const update = {};
+  if (razorpaySurchargePercent !== undefined) {
+    const val = Number(razorpaySurchargePercent);
+    if (isNaN(val) || val < 0) return res.status(400).json({ message: 'Invalid surcharge percent' });
+    update.razorpaySurchargePercent = val;
+  }
+  if (serviceFee !== undefined) {
+    const val = Number(serviceFee);
+    if (isNaN(val) || val < 0) return res.status(400).json({ message: 'Invalid service fee' });
+    update.serviceFee = val;
+  }
+  const settings = await Settings.findOneAndUpdate({ key: 'global' }, update, { new: true, upsert: true });
+  res.json(settings);
+}));
 
 router.get('/shops', asyncHandler(async (req, res) => {
   const shops = await Shop.find().populate('ownerId', 'name email');

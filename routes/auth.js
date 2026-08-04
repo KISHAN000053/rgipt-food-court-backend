@@ -3,6 +3,7 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Shop = require('../models/Shop');
 const router = express.Router();
 
 const { requireAuth } = require('../middleware/auth');
@@ -52,7 +53,7 @@ passport.use(new GoogleStrategy({
 
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-router.get('/google/callback', passport.authenticate('google', { session: false, failureRedirect: '/login' }), (req, res) => {
+router.get('/google/callback', passport.authenticate('google', { session: false, failureRedirect: '/login' }), asyncHandler(async (req, res) => {
   const token = jwt.sign({ id: req.user._id }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
   res.cookie('token', token, {
     httpOnly: true,
@@ -60,13 +61,19 @@ router.get('/google/callback', passport.authenticate('google', { session: false,
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
-  
+
   if (!req.user.isOnboarded) {
-    res.redirect(`${process.env.FRONTEND_URL}/onboarding`);
-  } else {
-    res.redirect(`${process.env.FRONTEND_URL}/home`);
+    return res.redirect(`${process.env.FRONTEND_URL}/onboarding`);
   }
-});
+  if (req.user.role === 'admin') {
+    return res.redirect(`${process.env.FRONTEND_URL}/admin`);
+  }
+  const ownsShop = await Shop.findOne({ ownerEmail: req.user.email.toLowerCase() });
+  if (ownsShop) {
+    return res.redirect(`${process.env.FRONTEND_URL}/shop-owner`);
+  }
+  res.redirect(`${process.env.FRONTEND_URL}/home`);
+}));
 
 router.post('/logout', (req, res) => {
   res.clearCookie('token');
@@ -74,7 +81,10 @@ router.post('/logout', (req, res) => {
 });
 
 router.get('/me', requireAuth, asyncHandler(async (req, res) => {
-  res.json(req.user);
+  const ownsShop = await Shop.findOne({ ownerEmail: req.user.email.toLowerCase() });
+  const userObj = req.user.toObject();
+  userObj.isShopOwner = !!ownsShop;
+  res.json(userObj);
 }));
 
 module.exports = router;

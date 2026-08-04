@@ -51,6 +51,7 @@ app.use(passport.initialize());
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/shops', require('./routes/shops'));
+app.use('/api/settings', require('./routes/settings'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/owner', require('./routes/shopOwner'));
