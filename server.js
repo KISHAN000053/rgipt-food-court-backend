@@ -59,8 +59,9 @@ app.use('/api/admin', require('./routes/admin'));
 // Error handling
 app.use(errorHandler);
 
-// Database connection
+// Database connection + server start
 const PORT = process.env.PORT || 5000;
+
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/rgipt-food-court')
   .then(() => {
     console.log('Connected to MongoDB');
@@ -69,5 +70,13 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/rgipt-foo
     });
   })
   .catch((err) => {
-    console.error('MongoDB connection error:', err);
+    console.error('MongoDB connection error:', err.message);
+    process.exit(1);
   });
+
+// Catch unhandled promise rejections globally
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
