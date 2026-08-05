@@ -87,15 +87,17 @@ router.get('/google/callback', (req, res, next) => {
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 
-  if (!req.user.isOnboarded) {
-    return res.redirect(`${process.env.FRONTEND_URL}/onboarding#token=${token}`);
-  }
+  // Admins and shop owners have their own dashboards and never go through student onboarding.
   if (req.user.role === 'admin') {
     return res.redirect(`${process.env.FRONTEND_URL}/admin#token=${token}`);
   }
   const ownsShop = await Shop.findOne({ ownerEmail: req.user.email.toLowerCase() });
   if (ownsShop) {
     return res.redirect(`${process.env.FRONTEND_URL}/shop-owner#token=${token}`);
+  }
+  // Regular students complete their profile first.
+  if (!req.user.isOnboarded) {
+    return res.redirect(`${process.env.FRONTEND_URL}/onboarding#token=${token}`);
   }
   res.redirect(`${process.env.FRONTEND_URL}/home#token=${token}`);
 }));
