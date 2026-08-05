@@ -63,16 +63,16 @@ router.get('/google/callback', passport.authenticate('google', { session: false,
   });
 
   if (!req.user.isOnboarded) {
-    return res.redirect(`${process.env.FRONTEND_URL}/onboarding`);
+    return res.redirect(`${process.env.FRONTEND_URL}/onboarding#token=${token}`);
   }
   if (req.user.role === 'admin') {
-    return res.redirect(`${process.env.FRONTEND_URL}/admin`);
+    return res.redirect(`${process.env.FRONTEND_URL}/admin#token=${token}`);
   }
   const ownsShop = await Shop.findOne({ ownerEmail: req.user.email.toLowerCase() });
   if (ownsShop) {
-    return res.redirect(`${process.env.FRONTEND_URL}/shop-owner`);
+    return res.redirect(`${process.env.FRONTEND_URL}/shop-owner#token=${token}`);
   }
-  res.redirect(`${process.env.FRONTEND_URL}/home`);
+  res.redirect(`${process.env.FRONTEND_URL}/home#token=${token}`);
 }));
 
 router.post('/logout', (req, res) => {

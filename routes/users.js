@@ -20,13 +20,13 @@ router.patch('/profile', requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Enter a valid 10-digit mobile number.' });
   }
 
-  // Validate the room number digits against the selected hostel's rule.
+  // Room number: accept 3 or 4 digits (prefix is added separately by the frontend).
   const hostelDoc = await Hostel.findOne({ name: hostel, isActive: true });
   if (!hostelDoc) {
     return res.status(400).json({ message: 'Please select a valid hostel.' });
   }
-  if (!new RegExp(`^[0-9]{${hostelDoc.roomDigits}}$`).test(String(roomNumber))) {
-    return res.status(400).json({ message: `Room number must be exactly ${hostelDoc.roomDigits} digits for ${hostel}.` });
+  if (!/^[0-9]{3,4}$/.test(String(roomNumber).replace(/^.*?-/, ''))) {
+    return res.status(400).json({ message: 'Room number must be 3 or 4 digits.' });
   }
 
   const update = { hostel, roomNumber, phone, isOnboarded: true };

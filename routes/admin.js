@@ -13,17 +13,14 @@ const asyncHandler = require('../middleware/asyncHandler');
 router.use(requireAdmin);
 
 router.get('/payouts', asyncHandler(async (req, res) => {
-  // Owed to each shop = sum of basePrice*quantity (their own set prices) across all
-  // non-cancelled orders. This deliberately excludes the platform markup and service
-  // fee — those are platform revenue, not the shop's money.
+  // Owed to each shop = their order subtotals (real prices they set). Platform revenue
+  // is the separate processing fee (2%) + service fee, not a price difference.
   const payouts = await Order.aggregate([
     { $match: { status: { $ne: 'cancelled' } } },
-    { $unwind: '$items' },
     {
       $group: {
         _id: '$shop',
-        amountOwed: { $sum: { $multiply: ['$items.basePrice', '$items.quantity'] } },
-        amountCollectedFromStudents: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
+        amountOwed: { $sum: '$subtotal' },
         orderIds: { $addToSet: '$_id' },
       }
     },
@@ -35,20 +32,22 @@ router.get('/payouts', asyncHandler(async (req, res) => {
         shopId: '$_id',
         shopName: '$shop.name',
         amountOwed: { $round: ['$amountOwed', 2] },
-        amountCollectedFromStudents: { $round: ['$amountCollectedFromStudents', 2] },
-        platformMarkupRevenue: { $round: [{ $subtract: ['$amountCollectedFromStudents', '$amountOwed'] }, 2] },
         orderCount: { $size: '$orderIds' },
       }
     },
     { $sort: { shopName: 1 } }
   ]);
 
-  const serviceFeeAgg = await Order.aggregate([
+  const feeAgg = await Order.aggregate([
     { $match: { status: { $ne: 'cancelled' } } },
-    { $group: { _id: null, totalServiceFees: { $sum: '$serviceFee' } } }
+    { $group: {
+      _id: null,
+      totalServiceFees: { $sum: '$serviceFee' },
+      totalProcessingFees: { $sum: '$processingFee' },
+    } }
   ]);
-  const totalServiceFees = Math.round((serviceFeeAgg[0]?.totalServiceFees || 0) * 100) / 100;
-  const totalMarkupRevenue = Math.round(payouts.reduce((sum, p) => sum + p.platformMarkupRevenue, 0) * 100) / 100;
+  const totalServiceFees = Math.round((feeAgg[0]?.totalServiceFees || 0) * 100) / 100;
+  const totalMarkupRevenue = Math.round((feeAgg[0]?.totalProcessingFees || 0) * 100) / 100;
 
   res.json({
     payouts,

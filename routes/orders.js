@@ -9,10 +9,6 @@ const asyncHandler = require('../middleware/asyncHandler');
 
 const crypto = require('crypto');
 
-const withMarkup = (basePrice, surchargePercent) => {
-  return Math.round(basePrice * (1 + surchargePercent / 100) * 100) / 100;
-};
-
 // Cart items can come from multiple shops. We split them into one Order per shop
 // (so each shop's kitchen only ever sees its own items) but link them with a shared
 // groupId and charge the service fee only once across the whole checkout, so it reads
@@ -59,38 +55,39 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
     if (!shop || !shop.isOpen || shop.isPermanentlyClosed) {
       return res.status(400).json({ message: `${shop?.name || 'A shop'} in your cart is currently unavailable` });
     }
-    const shopSubtotal = byShop.get(shopId).reduce((sum, { menuItem, quantity }) => {
-      return sum + withMarkup(menuItem.price, settings.razorpaySurchargePercent) * quantity;
-    }, 0);
-    if (shopSubtotal < (shop.minOrder || 0)) {
-      return res.status(400).json({ message: `Minimum order for ${shop.name} is ₹${shop.minOrder}` });
-    }
   }
+
+  // Whole-cart subtotal at real prices → processing fee is a % of this, charged once,
+  // rounded to 2 decimals.
+  const cartSubtotal = Array.from(byShop.values()).reduce((sum, lines) => {
+    return sum + lines.reduce((s, { menuItem, quantity }) => s + menuItem.price * quantity, 0);
+  }, 0);
+  const processingFeeTotal = Math.round(cartSubtotal * (settings.razorpaySurchargePercent / 100) * 100) / 100;
 
   const groupId = 'GRP-' + crypto.randomBytes(6).toString('hex');
   const createdOrders = [];
 
   for (let i = 0; i < shopIds.length; i++) {
     const shopId = shopIds[i];
-    const shop = shopMap.get(shopId);
     const cartLines = byShop.get(shopId);
 
     let subtotal = 0;
     const orderItems = cartLines.map(({ menuItem, quantity }) => {
-      const chargedPrice = withMarkup(menuItem.price, settings.razorpaySurchargePercent);
-      subtotal += chargedPrice * quantity;
+      subtotal += menuItem.price * quantity;
       return {
         menuItem: menuItem._id,
         name: menuItem.name,
-        price: chargedPrice,
+        price: menuItem.price,
         basePrice: menuItem.price,
         quantity
       };
     });
+    subtotal = Math.round(subtotal * 100) / 100;
 
-    // Only the first shop in the group carries the one-time service fee.
+    // Service fee and processing fee both sit only on the first sub-order (charged once).
     const serviceFee = i === 0 ? settings.serviceFee : 0;
-    const total = Math.round((subtotal + serviceFee) * 100) / 100;
+    const processingFee = i === 0 ? processingFeeTotal : 0;
+    const total = Math.round((subtotal + serviceFee + processingFee) * 100) / 100;
     const orderNumber = 'ORD-' + String(Date.now() % 1000000).padStart(6, '0') + '-' + i;
 
     const order = await Order.create({
@@ -102,6 +99,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
       orderType: type,
       subtotal,
       serviceFee,
+      processingFee,
       total,
       paymentMethod: paymentMethod || 'cash',
       specialInstructions

@@ -14,6 +14,7 @@ const orderSchema = new mongoose.Schema({
   }],
   subtotal: Number,
   serviceFee: { type: Number, default: 2 },
+  processingFee: { type: Number, default: 0 },
   total: Number,
   orderType: { type: String, enum: ['takeaway', 'hostel'], default: 'hostel' },
   status: { 

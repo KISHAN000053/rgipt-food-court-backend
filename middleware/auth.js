@@ -4,7 +4,12 @@ const Shop = require('../models/Shop');
 
 const requireAuth = async (req, res, next) => {
   try {
-    const token = req.cookies.token;
+    // Prefer cookie, but fall back to Authorization: Bearer header for browsers that
+    // block cross-site cookies (Brave, Safari, strict privacy settings).
+    let token = req.cookies.token;
+    if (!token && req.headers.authorization?.startsWith('Bearer ')) {
+      token = req.headers.authorization.slice(7);
+    }
     if (!token) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
