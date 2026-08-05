@@ -18,10 +18,17 @@ const withMarkup = (basePrice, surchargePercent) => {
 // groupId and charge the service fee only once across the whole checkout, so it reads
 // as a single order to the student even though it's stored as several documents.
 router.post('/', requireAuth, asyncHandler(async (req, res) => {
-  const { items, specialInstructions, paymentMethod } = req.body;
+  const { items, specialInstructions, paymentMethod, orderType } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: 'Cart is empty' });
+  }
+
+  const type = orderType === 'takeaway' ? 'takeaway' : 'hostel';
+
+  // For hostel delivery we need a saved room; nudge the student to finish onboarding.
+  if (type === 'hostel' && (!req.user.hostel || !req.user.roomNumber)) {
+    return res.status(400).json({ message: 'Please set your hostel and room in your profile before ordering hostel delivery.' });
   }
 
   const settings = await Settings.getGlobal();
@@ -92,6 +99,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
       user: req.user._id,
       shop: shopId,
       items: orderItems,
+      orderType: type,
       subtotal,
       serviceFee,
       total,
