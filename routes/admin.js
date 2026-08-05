@@ -6,6 +6,7 @@ const User = require('../models/User');
 const Order = require('../models/Order');
 const Announcement = require('../models/Announcement');
 const Settings = require('../models/Settings');
+const Hostel = require('../models/Hostel');
 const { requireAdmin } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -172,6 +173,65 @@ router.patch('/users/:id/role', asyncHandler(async (req, res) => {
   const { role } = req.body;
   const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true });
   res.json(user);
+}));
+
+router.delete('/users/:id', asyncHandler(async (req, res) => {
+  // Guard: an admin can't delete their own account, and can't delete another admin.
+  const target = await User.findById(req.params.id);
+  if (!target) return res.status(404).json({ message: 'User not found' });
+  if (String(target._id) === String(req.user._id)) {
+    return res.status(400).json({ message: 'You cannot delete your own account' });
+  }
+  if (target.role === 'admin') {
+    return res.status(400).json({ message: 'Cannot delete an admin account' });
+  }
+  await User.findByIdAndDelete(req.params.id);
+  res.json({ message: 'User deleted' });
+}));
+
+// --- Hostel management ---
+const HOSTEL_FIELDS = ['name', 'roomPrefix', 'roomDigits', 'isActive'];
+const buildHostelPayload = (body) => {
+  const payload = {};
+  for (const field of HOSTEL_FIELDS) {
+    if (body[field] !== undefined) payload[field] = body[field];
+  }
+  if (payload.roomPrefix !== undefined) payload.roomPrefix = String(payload.roomPrefix).trim();
+  if (payload.roomDigits !== undefined) payload.roomDigits = Number(payload.roomDigits);
+  return payload;
+};
+
+router.get('/hostels', asyncHandler(async (req, res) => {
+  const hostels = await Hostel.find().sort({ name: 1 });
+  res.json(hostels);
+}));
+
+router.post('/hostels', asyncHandler(async (req, res) => {
+  const payload = buildHostelPayload(req.body);
+  if (!payload.name || !payload.name.trim()) {
+    return res.status(400).json({ message: 'Hostel name is required' });
+  }
+  if (payload.roomDigits !== undefined && (payload.roomDigits < 1 || payload.roomDigits > 6)) {
+    return res.status(400).json({ message: 'Room digits must be between 1 and 6' });
+  }
+  const hostel = await Hostel.create(payload);
+  res.status(201).json(hostel);
+}));
+
+router.patch('/hostels/:id', asyncHandler(async (req, res) => {
+  const payload = buildHostelPayload(req.body);
+  if (payload.roomDigits !== undefined && (payload.roomDigits < 1 || payload.roomDigits > 6)) {
+    return res.status(400).json({ message: 'Room digits must be between 1 and 6' });
+  }
+  const hostel = await Hostel.findByIdAndUpdate(req.params.id, payload, { new: true });
+  if (!hostel) return res.status(404).json({ message: 'Hostel not found' });
+  res.json(hostel);
+}));
+
+router.delete('/hostels/:id', asyncHandler(async (req, res) => {
+  const hostel = await Hostel.findByIdAndDelete(req.params.id);
+  if (!hostel) return res.status(404).json({ message: 'Hostel not found' });
+  res.json({ message: 'Hostel deleted' });
 }));
 
 router.get('/orders', asyncHandler(async (req, res) => {
