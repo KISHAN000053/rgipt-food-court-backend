@@ -126,18 +126,40 @@ router.get('/menu/:shopId', asyncHandler(async (req, res) => {
   res.json(items);
 }));
 
+const ADMIN_MENU_FIELDS = ['name', 'price', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled', 'shop'];
+const buildAdminMenuPayload = (body) => {
+  const payload = {};
+  for (const field of ADMIN_MENU_FIELDS) {
+    if (body[field] !== undefined) payload[field] = body[field];
+  }
+  return payload;
+};
+
 router.post('/menu', asyncHandler(async (req, res) => {
-  const item = await MenuItem.create(req.body);
+  const payload = buildAdminMenuPayload(req.body);
+  if (!payload.name || payload.price === undefined || !payload.category || !payload.shop) {
+    return res.status(400).json({ message: 'Name, price, category and shop are required' });
+  }
+  if (Number(payload.price) < 0) {
+    return res.status(400).json({ message: 'Price cannot be negative' });
+  }
+  const item = await MenuItem.create(payload);
   res.status(201).json(item);
 }));
 
 router.patch('/menu/:id', asyncHandler(async (req, res) => {
-  const item = await MenuItem.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  const payload = buildAdminMenuPayload(req.body);
+  if (payload.price !== undefined && Number(payload.price) < 0) {
+    return res.status(400).json({ message: 'Price cannot be negative' });
+  }
+  const item = await MenuItem.findByIdAndUpdate(req.params.id, payload, { new: true });
+  if (!item) return res.status(404).json({ message: 'Menu item not found' });
   res.json(item);
 }));
 
 router.delete('/menu/:id', asyncHandler(async (req, res) => {
-  await MenuItem.findByIdAndDelete(req.params.id);
+  const item = await MenuItem.findByIdAndDelete(req.params.id);
+  if (!item) return res.status(404).json({ message: 'Menu item not found' });
   res.json({ message: 'Menu item deleted' });
 }));
 
