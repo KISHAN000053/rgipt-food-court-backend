@@ -69,6 +69,22 @@ router.get('/menu', asyncHandler(async (req, res) => {
 
 const MENU_FIELDS = ['name', 'price', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled'];
 
+// Shop owners may only change prices between 4:00 and 14:00 (IST). Everything else
+// about an item (availability, name, category) can be edited any time.
+// Admins are exempt so you can always correct a price.
+const PRICE_WINDOW_START = 4;   // 4 AM
+const PRICE_WINDOW_END = 14;    // 2 PM
+
+const isWithinPriceWindow = () => {
+  // Server runs in UTC on Render; convert to IST (UTC+5:30) for the campus-local window.
+  const nowUtcMs = Date.now();
+  const istMs = nowUtcMs + (5 * 60 + 30) * 60 * 1000;
+  const istHour = new Date(istMs).getUTCHours();
+  return istHour >= PRICE_WINDOW_START && istHour < PRICE_WINDOW_END;
+};
+
+const priceWindowMessage = 'Prices can only be changed between 4:00 AM and 2:00 PM. You can still update availability and other details.';
+
 const buildMenuPayload = (body) => {
   const payload = {};
   for (const field of MENU_FIELDS) {
@@ -84,6 +100,9 @@ router.post('/menu', asyncHandler(async (req, res) => {
   }
   if (Number(payload.price) < 0) {
     return res.status(400).json({ message: 'Price cannot be negative' });
+  }
+  if (req.user.role !== 'admin' && !isWithinPriceWindow()) {
+    return res.status(403).json({ message: 'New items can only be added between 4:00 AM and 2:00 PM.' });
   }
   const item = await MenuItem.create({ ...payload, shop: req.shop._id });
   res.status(201).json(item);
@@ -101,6 +120,13 @@ router.patch('/menu/:itemId', asyncHandler(async (req, res) => {
   const payload = buildMenuPayload(req.body);
   if (payload.price !== undefined && Number(payload.price) < 0) {
     return res.status(400).json({ message: 'Price cannot be negative' });
+  }
+  if (payload.price !== undefined && req.user.role !== 'admin') {
+    const existing = await MenuItem.findOne({ _id: req.params.itemId, shop: req.shop._id });
+    const priceChanged = existing && Number(existing.price) !== Number(payload.price);
+    if (priceChanged && !isWithinPriceWindow()) {
+      return res.status(403).json({ message: priceWindowMessage });
+    }
   }
   const item = await MenuItem.findOneAndUpdate(
     { _id: req.params.itemId, shop: req.shop._id },

@@ -113,11 +113,19 @@ router.post('/shops', asyncHandler(async (req, res) => {
 router.patch('/shops/:id', asyncHandler(async (req, res) => {
   const payload = await buildShopPayload(req.body);
   const shop = await Shop.findByIdAndUpdate(req.params.id, payload, { new: true }).populate('ownerId', 'name email');
+
+  // Tell every connected browser immediately, so students see a shop going
+  // offline without needing to reload.
+  const io = req.app.get('io');
+  if (io) io.emit('shopStatusChanged', { shopId: String(shop._id), isOpen: shop.isOpen, name: shop.name });
+
   res.json(shop);
 }));
 
 router.delete('/shops/:id', asyncHandler(async (req, res) => {
   await Shop.findByIdAndUpdate(req.params.id, { isPermanentlyClosed: true, isOpen: false });
+  const io = req.app.get('io');
+  if (io) io.emit('shopStatusChanged', { shopId: String(req.params.id), isOpen: false });
   res.json({ message: 'Shop softly deleted' });
 }));
 
