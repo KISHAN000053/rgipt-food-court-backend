@@ -97,6 +97,23 @@ router.get('/:code', asyncHandler(async (req, res) => {
   const room = await PartyRoom.findOne({ code: req.params.code.toUpperCase() }).populate('host', 'name');
   if (!room) return res.status(404).json({ message: 'Party room not found. Check the code and try again.' });
 
+  // Prices are stored when an item is added, but checkout charges the live menu price.
+  // Re-sync here so the total the host sees is always the total they'll actually pay.
+  if (room.status === 'open' && room.items.length > 0) {
+    const ids = room.items.map(i => i.menuItem);
+    const liveItems = await MenuItem.find({ _id: { $in: ids } });
+    const priceMap = new Map(liveItems.map(m => [String(m._id), m.price]));
+    let changed = false;
+    for (const item of room.items) {
+      const livePrice = priceMap.get(String(item.menuItem));
+      if (livePrice !== undefined && livePrice !== item.price) {
+        item.price = livePrice;
+        changed = true;
+      }
+    }
+    if (changed) await room.save();
+  }
+
   const settings = await Settings.getGlobal();
   const shaped = shapeRoom(room, req.user._id);
   shaped.serviceFee = settings.serviceFee;

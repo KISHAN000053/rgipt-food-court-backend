@@ -38,16 +38,22 @@ const requireAdmin = async (req, res, next) => {
 
 const requireShopOwner = async (req, res, next) => {
   await requireAuth(req, res, async () => {
+    // ownerEmail is always stored lowercased, so the lookup must match that.
+    const email = req.user.email.toLowerCase();
+
     if (req.user.role === 'admin') {
       if (req.params.id) {
         req.shop = await Shop.findById(req.params.id);
       } else {
-         req.shop = await Shop.findOne({ ownerEmail: req.user.email });
+        req.shop = await Shop.findOne({ ownerEmail: email });
+      }
+      if (!req.shop) {
+        return res.status(404).json({ message: 'No shop found for this account.' });
       }
       return next();
     }
-    
-    const shop = await Shop.findOne({ ownerEmail: req.user.email });
+
+    const shop = await Shop.findOne({ ownerEmail: email });
     if (!shop) {
       return res.status(403).json({ message: 'Forbidden: Shop owner access required' });
     }
