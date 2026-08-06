@@ -45,6 +45,11 @@ app.use(cors({
   credentials: true,
 }));
 app.use(compression());
+
+// Razorpay webhook needs the raw, unparsed body to verify its signature — must be
+// registered before express.json() or the signature check will always fail.
+app.use('/api/payments/razorpay/webhook', express.raw({ type: '*/*' }));
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(passport.initialize());
@@ -58,6 +63,7 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/hostels', require('./routes/hostels'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/orders', require('./routes/orders'));
+app.use('/api/payments', require('./routes/payments'));
 app.use('/api/party', require('./routes/party'));
 app.use('/api/owner', require('./routes/shopOwner'));
 app.use('/api/admin', require('./routes/admin'));

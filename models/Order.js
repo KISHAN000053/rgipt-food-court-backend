@@ -23,8 +23,10 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'accepted', 'preparing', 'delivery_initiated', 'cancelled'], 
     default: 'pending' 
   },
-  paymentMethod: { type: String, enum: ['cash', 'upi'], default: 'cash' },
+  paymentMethod: { type: String, enum: ['cash', 'upi', 'razorpay'], default: 'cash' },
   paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' },
+  razorpayOrderId: String,
+  razorpayPaymentId: String,
   specialInstructions: String,
   partyCode: String, // set when this order came from a party room
 }, { timestamps: true });
