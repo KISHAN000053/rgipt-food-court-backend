@@ -7,6 +7,32 @@ const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(requireShopOwner);
 
+// The shop owner's own shop info — used to show name + open/closed state.
+router.get('/shop', asyncHandler(async (req, res) => {
+  res.json({
+    _id: req.shop._id,
+    name: req.shop.name,
+    isOpen: req.shop.isOpen,
+    isPermanentlyClosed: req.shop.isPermanentlyClosed,
+  });
+}));
+
+// Owner toggles their own shop online/offline whenever they want.
+router.patch('/shop/status', asyncHandler(async (req, res) => {
+  if (req.shop.isPermanentlyClosed) {
+    return res.status(400).json({ message: 'This shop has been deactivated by an admin and cannot be reopened here.' });
+  }
+  const { isOpen } = req.body;
+  req.shop.isOpen = !!isOpen;
+  await req.shop.save();
+
+  // Same live-update mechanism admin uses — students see it instantly.
+  const io = req.app.get('io');
+  if (io) io.emit('shopStatusChanged', { shopId: String(req.shop._id), isOpen: req.shop.isOpen, name: req.shop.name });
+
+  res.json({ _id: req.shop._id, name: req.shop.name, isOpen: req.shop.isOpen });
+}));
+
 router.get('/orders', asyncHandler(async (req, res) => {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
