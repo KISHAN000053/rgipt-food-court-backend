@@ -9,16 +9,6 @@ const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 
-const isAllowedEmail = async (email) => {
-  const lower = email.toLowerCase();
-  if (lower.endsWith('@rgipt.ac.in')) return true;
-  const adminEmails = (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
-    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-  if (adminEmails.includes(lower)) return true;
-  const ownsShop = await Shop.findOne({ ownerEmail: lower });
-  return !!ownsShop;
-};
-
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID || 'mock',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'mock',
@@ -27,10 +17,6 @@ passport.use(new GoogleStrategy({
   async (accessToken, refreshToken, profile, done) => {
     try {
       const email = profile.emails[0].value;
-      const allowed = await isAllowedEmail(email);
-      if (!allowed) {
-        return done(null, false, { message: 'Only @rgipt.ac.in emails can sign in.' });
-      }
 
       let user = await User.findOne({ googleId: profile.id });
       if (!user) {

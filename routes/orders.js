@@ -7,113 +7,27 @@ const Settings = require('../models/Settings');
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 
-const crypto = require('crypto');
+const { placeOrder } = require('../services/orderService');
 
-// Cart items can come from multiple shops. We split them into one Order per shop
-// (so each shop's kitchen only ever sees its own items) but link them with a shared
-// groupId and charge the service fee only once across the whole checkout, so it reads
-// as a single order to the student even though it's stored as several documents.
+// Normal checkout. Splitting per shop and fee handling live in the shared order
+// service so party checkout can't drift from this logic.
 router.post('/', requireAuth, asyncHandler(async (req, res) => {
   const { items, specialInstructions, paymentMethod, orderType } = req.body;
 
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ message: 'Cart is empty' });
+  const result = await placeOrder({
+    user: req.user,
+    items,
+    orderType,
+    paymentMethod,
+    specialInstructions,
+    io: req.app.get('io'),
+  });
+
+  if (!result.ok) {
+    return res.status(result.status).json({ message: result.message });
   }
 
-  const type = orderType === 'takeaway' ? 'takeaway' : 'hostel';
-
-  // For hostel delivery we need a saved room; nudge the student to finish onboarding.
-  if (type === 'hostel' && (!req.user.hostel || !req.user.roomNumber)) {
-    return res.status(400).json({ message: 'Please set your hostel and room in your profile before ordering hostel delivery.' });
-  }
-
-  const settings = await Settings.getGlobal();
-
-  // Fetch all menu items up front and group by shop.
-  const menuItemIds = items.map(i => i.menuItemId);
-  const menuItems = await MenuItem.find({ _id: { $in: menuItemIds }, isEnabled: true, isAvailable: true });
-  const menuItemMap = new Map(menuItems.map(m => [String(m._id), m]));
-
-  const byShop = new Map(); // shopId -> [{ menuItem, quantity }]
-  for (const cartItem of items) {
-    const menuItem = menuItemMap.get(String(cartItem.menuItemId));
-    if (!menuItem) {
-      return res.status(400).json({ message: `Item ${cartItem.menuItemId} is not available` });
-    }
-    const shopKey = String(menuItem.shop);
-    if (!byShop.has(shopKey)) byShop.set(shopKey, []);
-    byShop.get(shopKey).push({ menuItem, quantity: cartItem.quantity });
-  }
-
-  const shopIds = Array.from(byShop.keys());
-  const shops = await Shop.find({ _id: { $in: shopIds } });
-  const shopMap = new Map(shops.map(s => [String(s._id), s]));
-
-  // Validate every shop before creating anything (so we never charge for a partially-failed cart).
-  for (const shopId of shopIds) {
-    const shop = shopMap.get(shopId);
-    if (!shop || !shop.isOpen || shop.isPermanentlyClosed) {
-      return res.status(400).json({ message: `${shop?.name || 'A shop'} in your cart is currently unavailable` });
-    }
-  }
-
-  // Whole-cart subtotal at real prices → processing fee is a % of this, charged once,
-  // rounded to 2 decimals.
-  const cartSubtotal = Array.from(byShop.values()).reduce((sum, lines) => {
-    return sum + lines.reduce((s, { menuItem, quantity }) => s + menuItem.price * quantity, 0);
-  }, 0);
-  const processingFeeTotal = Math.round(cartSubtotal * (settings.razorpaySurchargePercent / 100) * 100) / 100;
-
-  const groupId = 'GRP-' + crypto.randomBytes(6).toString('hex');
-  const createdOrders = [];
-
-  for (let i = 0; i < shopIds.length; i++) {
-    const shopId = shopIds[i];
-    const cartLines = byShop.get(shopId);
-
-    let subtotal = 0;
-    const orderItems = cartLines.map(({ menuItem, quantity }) => {
-      subtotal += menuItem.price * quantity;
-      return {
-        menuItem: menuItem._id,
-        name: menuItem.name,
-        price: menuItem.price,
-        basePrice: menuItem.price,
-        quantity
-      };
-    });
-    subtotal = Math.round(subtotal * 100) / 100;
-
-    // Service fee and processing fee both sit only on the first sub-order (charged once).
-    const serviceFee = i === 0 ? settings.serviceFee : 0;
-    const processingFee = i === 0 ? processingFeeTotal : 0;
-    const total = Math.round((subtotal + serviceFee + processingFee) * 100) / 100;
-    const orderNumber = 'ORD-' + String(Date.now() % 1000000).padStart(6, '0') + '-' + i;
-
-    const order = await Order.create({
-      orderNumber,
-      groupId,
-      user: req.user._id,
-      shop: shopId,
-      items: orderItems,
-      orderType: type,
-      subtotal,
-      serviceFee,
-      processingFee,
-      total,
-      paymentMethod: paymentMethod || 'cash',
-      specialInstructions
-    });
-
-    createdOrders.push(order);
-
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`shop-${shopId}`).emit('newOrder', order);
-    }
-  }
-
-  res.status(201).json({ groupId, orders: createdOrders });
+  res.status(201).json({ groupId: result.groupId, orders: result.orders });
 }));
 
 router.get('/my', requireAuth, asyncHandler(async (req, res) => {

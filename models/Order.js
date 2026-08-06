@@ -10,7 +10,8 @@ const orderSchema = new mongoose.Schema({
     name: String,
     price: Number,
     basePrice: Number,
-    quantity: Number
+    quantity: Number,
+    addedByName: String, // for party orders: who in the group asked for this item
   }],
   subtotal: Number,
   serviceFee: { type: Number, default: 2 },
@@ -25,6 +26,7 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ['cash', 'upi'], default: 'cash' },
   paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' },
   specialInstructions: String,
+  partyCode: String, // set when this order came from a party room
 }, { timestamps: true });
 
 // Indexes for the queries that actually run often, so they don't scan the whole collection:

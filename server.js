@@ -58,6 +58,7 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/hostels', require('./routes/hostels'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/orders', require('./routes/orders'));
+app.use('/api/party', require('./routes/party'));
 app.use('/api/owner', require('./routes/shopOwner'));
 app.use('/api/admin', require('./routes/admin'));
 
