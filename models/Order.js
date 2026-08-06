@@ -27,4 +27,8 @@ const orderSchema = new mongoose.Schema({
   specialInstructions: String,
 }, { timestamps: true });
 
+// Indexes for the queries that actually run often, so they don't scan the whole collection:
+orderSchema.index({ user: 1, createdAt: -1 });   // student's order history
+orderSchema.index({ shop: 1, status: 1 });        // shop owner's live/pending orders
+
 module.exports = mongoose.model('Order', orderSchema);

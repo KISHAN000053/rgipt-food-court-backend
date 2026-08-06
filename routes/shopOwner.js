@@ -133,4 +133,36 @@ router.get('/stats', asyncHandler(async (req, res) => {
   });
 }));
 
+// Order report for a date range. "earnings" = the shop's own subtotal (their prices),
+// which is what they actually get paid — platform fees are excluded.
+router.get('/report', asyncHandler(async (req, res) => {
+  const { from, to } = req.query;
+  const match = { shop: req.shop._id, status: { $ne: 'cancelled' } };
+
+  if (from || to) {
+    match.createdAt = {};
+    if (from) match.createdAt.$gte = new Date(from);
+    if (to) {
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      match.createdAt.$lte = end;
+    }
+  }
+
+  const orders = await Order.find(match).sort({ createdAt: -1 }).populate('user', 'name');
+
+  const rows = orders.map(o => ({
+    orderId: o._id.toString().slice(-6).toUpperCase(),
+    date: o.createdAt,
+    customer: o.user?.name || '',
+    type: o.orderType === 'takeaway' ? 'Takeaway' : 'Hostel',
+    items: o.items.map(i => `${i.quantity}x ${i.name}`).join('; '),
+    earnings: Math.round(o.subtotal * 100) / 100,
+  }));
+
+  const totalEarnings = Math.round(rows.reduce((sum, r) => sum + r.earnings, 0) * 100) / 100;
+
+  res.json({ rows, totalEarnings, orderCount: rows.length });
+}));
+
 module.exports = router;

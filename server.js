@@ -8,6 +8,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const errorHandler = require('./middleware/errorHandler');
+const compression = require('compression');
 
 const app = express();
 const server = http.createServer(app);
@@ -43,11 +44,13 @@ app.use(cors({
   origin: process.env.FRONTEND_URL,
   credentials: true,
 }));
+app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
 app.use(passport.initialize());
 
 // Routes
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/shops', require('./routes/shops'));

@@ -12,4 +12,7 @@ const shopSchema = new mongoose.Schema({
   categories: [String],
 }, { timestamps: true });
 
+// ownerEmail is looked up on every shop-owner login and /me request.
+shopSchema.index({ ownerEmail: 1 });
+
 module.exports = mongoose.model('Shop', shopSchema);
