@@ -135,7 +135,27 @@ router.get('/menu/:shopId', asyncHandler(async (req, res) => {
   res.json(items);
 }));
 
-const ADMIN_MENU_FIELDS = ['name', 'price', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled', 'shop'];
+// Shared by admin and shop-owner menu routes — validates a create/edit payload for
+// either a single-price item or a multi-price (variant) item. Variant names are
+// optional; prices are required and must be non-negative. At least 2 variants are
+// required when hasVariants is true (otherwise it isn't really "multiple").
+function validateMenuPricing(payload) {
+  if (payload.hasVariants) {
+    if (!Array.isArray(payload.variants) || payload.variants.length < 2) {
+      return 'Add at least 2 price options, or switch to a single price.';
+    }
+    for (const v of payload.variants) {
+      if (v.price === undefined || v.price === null || Number(v.price) < 0) {
+        return 'Every price option needs a valid price.';
+      }
+    }
+  } else if (payload.price !== undefined && Number(payload.price) < 0) {
+    return 'Price cannot be negative';
+  }
+  return null;
+}
+
+const ADMIN_MENU_FIELDS = ['name', 'price', 'hasVariants', 'variants', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled', 'shop'];
 const buildAdminMenuPayload = (body) => {
   const payload = {};
   for (const field of ADMIN_MENU_FIELDS) {
@@ -146,21 +166,23 @@ const buildAdminMenuPayload = (body) => {
 
 router.post('/menu', asyncHandler(async (req, res) => {
   const payload = buildAdminMenuPayload(req.body);
-  if (!payload.name || payload.price === undefined || !payload.category || !payload.shop) {
-    return res.status(400).json({ message: 'Name, price, category and shop are required' });
+  if (!payload.name || !payload.category || !payload.shop) {
+    return res.status(400).json({ message: 'Name, category and shop are required' });
   }
-  if (Number(payload.price) < 0) {
-    return res.status(400).json({ message: 'Price cannot be negative' });
+  if (!payload.hasVariants && payload.price === undefined) {
+    return res.status(400).json({ message: 'Price is required' });
   }
+  const pricingError = validateMenuPricing(payload);
+  if (pricingError) return res.status(400).json({ message: pricingError });
+  if (payload.hasVariants) payload.price = 0; // unused in variant mode, keep schema clean
   const item = await MenuItem.create(payload);
   res.status(201).json(item);
 }));
 
 router.patch('/menu/:id', asyncHandler(async (req, res) => {
   const payload = buildAdminMenuPayload(req.body);
-  if (payload.price !== undefined && Number(payload.price) < 0) {
-    return res.status(400).json({ message: 'Price cannot be negative' });
-  }
+  const pricingError = validateMenuPricing(payload);
+  if (pricingError) return res.status(400).json({ message: pricingError });
   const item = await MenuItem.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!item) return res.status(404).json({ message: 'Menu item not found' });
   res.json(item);

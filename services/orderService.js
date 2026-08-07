@@ -4,6 +4,20 @@ const MenuItem = require('../models/MenuItem');
 const Shop = require('../models/Shop');
 const Settings = require('../models/Settings');
 
+// Resolves the actual price + display name for a cart line against its menu item.
+// For a variant item, the student must have picked one of the item's options —
+// otherwise this returns an error so checkout can't silently default to something.
+function resolveLinePrice(menuItem, variantId) {
+  if (!menuItem.hasVariants) {
+    return { ok: true, price: menuItem.price, variantName: undefined };
+  }
+  const variant = menuItem.variants.id(variantId);
+  if (!variant) {
+    return { ok: false, message: `Please select an option for ${menuItem.name}.` };
+  }
+  return { ok: true, price: variant.price, variantName: variant.name || undefined };
+}
+
 /**
  * Places an order from a list of cart lines, splitting per shop but charging the
  * service fee and processing fee only once for the whole checkout.
@@ -13,7 +27,7 @@ const Settings = require('../models/Settings');
  *
  * @param {Object} opts
  * @param {Object} opts.user          - the paying user (host, for party orders)
- * @param {Array}  opts.items         - [{ menuItemId, quantity, addedByName? }]
+ * @param {Array}  opts.items         - [{ menuItemId, quantity, variantId?, addedByName? }]
  * @param {String} opts.orderType     - 'takeaway' | 'hostel'
  * @param {String} opts.paymentMethod
  * @param {String} opts.specialInstructions
@@ -44,9 +58,19 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
     if (!menuItem) {
       return { ok: false, status: 400, message: `Item ${cartItem.menuItemId} is not available` };
     }
+    const resolved = resolveLinePrice(menuItem, cartItem.variantId);
+    if (!resolved.ok) {
+      return { ok: false, status: 400, message: resolved.message };
+    }
     const shopKey = String(menuItem.shop);
     if (!byShop.has(shopKey)) byShop.set(shopKey, []);
-    byShop.get(shopKey).push({ menuItem, quantity: cartItem.quantity, addedByName: cartItem.addedByName });
+    byShop.get(shopKey).push({
+      menuItem,
+      quantity: cartItem.quantity,
+      addedByName: cartItem.addedByName,
+      price: resolved.price,
+      variantName: resolved.variantName,
+    });
   }
 
   const shopIds = Array.from(byShop.keys());
@@ -61,7 +85,7 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
   }
 
   const cartSubtotal = Array.from(byShop.values()).reduce((sum, lines) => {
-    return sum + lines.reduce((s, { menuItem, quantity }) => s + menuItem.price * quantity, 0);
+    return sum + lines.reduce((s, { price, quantity }) => s + price * quantity, 0);
   }, 0);
   const processingFeeTotal = Math.round(cartSubtotal * (settings.razorpaySurchargePercent / 100) * 100) / 100;
 
@@ -73,14 +97,15 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
     const cartLines = byShop.get(shopId);
 
     let subtotal = 0;
-    const orderItems = cartLines.map(({ menuItem, quantity, addedByName }) => {
-      subtotal += menuItem.price * quantity;
+    const orderItems = cartLines.map(({ menuItem, quantity, addedByName, price, variantName }) => {
+      subtotal += price * quantity;
       return {
         menuItem: menuItem._id,
         name: menuItem.name,
-        price: menuItem.price,
-        basePrice: menuItem.price,
+        price,
+        basePrice: price,
         quantity,
+        variantName,
         addedByName: addedByName || undefined,
       };
     });
@@ -120,4 +145,4 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
   return { ok: true, groupId, orders: createdOrders };
 }
 
-module.exports = { placeOrder };
+module.exports = { placeOrder, resolveLinePrice };

@@ -11,6 +11,7 @@ const orderSchema = new mongoose.Schema({
     price: Number,
     basePrice: Number,
     quantity: Number,
+    variantName: String, // e.g. "Half" — set only if the item had multiple price options
     addedByName: String, // for party orders: who in the group asked for this item
   }],
   subtotal: Number,

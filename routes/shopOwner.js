@@ -96,7 +96,7 @@ router.get('/menu', asyncHandler(async (req, res) => {
   res.json(items);
 }));
 
-const MENU_FIELDS = ['name', 'price', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled'];
+const MENU_FIELDS = ['name', 'price', 'hasVariants', 'variants', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled'];
 
 // Shop owners may only change prices between 4:00 and 14:00 (IST). Everything else
 // about an item (availability, name, category) can be edited any time.
@@ -114,6 +114,37 @@ const isWithinPriceWindow = () => {
 
 const priceWindowMessage = 'Prices can only be changed between 4:00 AM and 2:00 PM. You can still update availability and other details.';
 
+function validateMenuPricing(payload) {
+  if (payload.hasVariants) {
+    if (!Array.isArray(payload.variants) || payload.variants.length < 2) {
+      return 'Add at least 2 price options, or switch to a single price.';
+    }
+    for (const v of payload.variants) {
+      if (v.price === undefined || v.price === null || Number(v.price) < 0) {
+        return 'Every price option needs a valid price.';
+      }
+    }
+  } else if (payload.price !== undefined && Number(payload.price) < 0) {
+    return 'Price cannot be negative';
+  }
+  return null;
+}
+
+// Compares an existing item's pricing against an incoming payload — used to decide
+// whether the 4am-2pm window applies. Works whether the item is single-price or
+// switching between single/variant, or editing variant prices.
+function hasPriceChanged(existing, payload) {
+  const willHaveVariants = payload.hasVariants !== undefined ? payload.hasVariants : existing.hasVariants;
+  if (willHaveVariants) {
+    const newVariants = payload.variants !== undefined ? payload.variants : existing.variants;
+    const oldVariants = existing.variants || [];
+    if (newVariants.length !== oldVariants.length) return true;
+    return newVariants.some((v, idx) => Number(v.price) !== Number(oldVariants[idx]?.price));
+  }
+  if (payload.price === undefined) return false;
+  return Number(existing.price) !== Number(payload.price);
+}
+
 const buildMenuPayload = (body) => {
   const payload = {};
   for (const field of MENU_FIELDS) {
@@ -124,15 +155,18 @@ const buildMenuPayload = (body) => {
 
 router.post('/menu', asyncHandler(async (req, res) => {
   const payload = buildMenuPayload(req.body);
-  if (!payload.name || payload.price === undefined || !payload.category) {
-    return res.status(400).json({ message: 'Name, price and category are required' });
+  if (!payload.name || !payload.category) {
+    return res.status(400).json({ message: 'Name and category are required' });
   }
-  if (Number(payload.price) < 0) {
-    return res.status(400).json({ message: 'Price cannot be negative' });
+  if (!payload.hasVariants && payload.price === undefined) {
+    return res.status(400).json({ message: 'Price is required' });
   }
+  const pricingError = validateMenuPricing(payload);
+  if (pricingError) return res.status(400).json({ message: pricingError });
   if (req.user.role !== 'admin' && !isWithinPriceWindow()) {
     return res.status(403).json({ message: 'New items can only be added between 4:00 AM and 2:00 PM.' });
   }
+  if (payload.hasVariants) payload.price = 0;
   const item = await MenuItem.create({ ...payload, shop: req.shop._id });
   res.status(201).json(item);
 }));
@@ -147,16 +181,18 @@ router.delete('/menu/:itemId', asyncHandler(async (req, res) => {
 
 router.patch('/menu/:itemId', asyncHandler(async (req, res) => {
   const payload = buildMenuPayload(req.body);
-  if (payload.price !== undefined && Number(payload.price) < 0) {
-    return res.status(400).json({ message: 'Price cannot be negative' });
+  const pricingError = validateMenuPricing(payload);
+  if (pricingError) return res.status(400).json({ message: pricingError });
+
+  const existing = await MenuItem.findOne({ _id: req.params.itemId, shop: req.shop._id });
+  if (!existing) {
+    return res.status(404).json({ message: 'Menu item not found' });
   }
-  if (payload.price !== undefined && req.user.role !== 'admin') {
-    const existing = await MenuItem.findOne({ _id: req.params.itemId, shop: req.shop._id });
-    const priceChanged = existing && Number(existing.price) !== Number(payload.price);
-    if (priceChanged && !isWithinPriceWindow()) {
-      return res.status(403).json({ message: priceWindowMessage });
-    }
+
+  if (req.user.role !== 'admin' && hasPriceChanged(existing, payload) && !isWithinPriceWindow()) {
+    return res.status(403).json({ message: priceWindowMessage });
   }
+
   const item = await MenuItem.findOneAndUpdate(
     { _id: req.params.itemId, shop: req.shop._id },
     payload,

@@ -7,7 +7,7 @@ const Shop = require('../models/Shop');
 const Settings = require('../models/Settings');
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { placeOrder } = require('../services/orderService');
+const { placeOrder, resolveLinePrice } = require('../services/orderService');
 
 router.use(requireAuth);
 
@@ -34,6 +34,7 @@ const shapeRoom = (room, currentUserId) => {
     byPerson[key].items.push({
       _id: item._id,
       name: item.name,
+      variantName: item.variantName,
       price: item.price,
       quantity: item.quantity,
       shopName: item.shopName,
@@ -99,15 +100,19 @@ router.get('/:code', asyncHandler(async (req, res) => {
 
   // Prices are stored when an item is added, but checkout charges the live menu price.
   // Re-sync here so the total the host sees is always the total they'll actually pay.
+  // Must resolve per-variant, not just the item's flat price, since a variant item's
+  // "price" depends on which option was chosen.
   if (room.status === 'open' && room.items.length > 0) {
     const ids = room.items.map(i => i.menuItem);
     const liveItems = await MenuItem.find({ _id: { $in: ids } });
-    const priceMap = new Map(liveItems.map(m => [String(m._id), m.price]));
+    const itemMap = new Map(liveItems.map(m => [String(m._id), m]));
     let changed = false;
     for (const item of room.items) {
-      const livePrice = priceMap.get(String(item.menuItem));
-      if (livePrice !== undefined && livePrice !== item.price) {
-        item.price = livePrice;
+      const liveItem = itemMap.get(String(item.menuItem));
+      if (!liveItem) continue;
+      const resolved = resolveLinePrice(liveItem, item.variantId);
+      if (resolved.ok && resolved.price !== item.price) {
+        item.price = resolved.price;
         changed = true;
       }
     }
@@ -123,13 +128,16 @@ router.get('/:code', asyncHandler(async (req, res) => {
 
 // A guest (or host) adds an item.
 router.post('/:code/items', asyncHandler(async (req, res) => {
-  const { menuItemId, quantity } = req.body;
+  const { menuItemId, quantity, variantId } = req.body;
   const room = await PartyRoom.findOne({ code: req.params.code.toUpperCase() });
   if (!room) return res.status(404).json({ message: 'Party room not found.' });
   if (room.status !== 'open') return res.status(400).json({ message: 'This party order has already been placed.' });
 
   const menuItem = await MenuItem.findOne({ _id: menuItemId, isEnabled: true, isAvailable: true });
   if (!menuItem) return res.status(400).json({ message: 'That item is not available.' });
+
+  const resolved = resolveLinePrice(menuItem, variantId);
+  if (!resolved.ok) return res.status(400).json({ message: resolved.message });
 
   const shop = await Shop.findById(menuItem.shop);
   if (!shop || !shop.isOpen || shop.isPermanentlyClosed) {
@@ -138,9 +146,11 @@ router.post('/:code/items', asyncHandler(async (req, res) => {
 
   const qty = Math.max(1, Number(quantity) || 1);
 
-  // If this person already added the same item, just bump the quantity.
+  // If this person already added the exact same item + variant, just bump the quantity.
   const existing = room.items.find(i =>
-    String(i.menuItem) === String(menuItem._id) && String(i.addedBy) === String(req.user._id)
+    String(i.menuItem) === String(menuItem._id) &&
+    String(i.addedBy) === String(req.user._id) &&
+    String(i.variantId || '') === String(variantId || '')
   );
   if (existing) {
     existing.quantity += qty;
@@ -148,7 +158,9 @@ router.post('/:code/items', asyncHandler(async (req, res) => {
     room.items.push({
       menuItem: menuItem._id,
       name: menuItem.name,
-      price: menuItem.price,
+      variantId: menuItem.hasVariants ? variantId : undefined,
+      variantName: resolved.variantName,
+      price: resolved.price,
       shop: shop._id,
       shopName: shop.name,
       quantity: qty,
@@ -194,13 +206,14 @@ router.post('/:code/checkout', asyncHandler(async (req, res) => {
   if (room.status !== 'open') return res.status(400).json({ message: 'This party order has already been placed.' });
   if (room.items.length === 0) return res.status(400).json({ message: 'Nobody has added anything yet.' });
 
-  // Guests may each add the same dish. Consolidate into one line per menu item so the
-  // shop receives a single clean order (e.g. "3x Samosa", not three separate lines).
+  // Guests may each add the same dish/variant. Consolidate into one line per
+  // (menu item + variant) so the shop receives a clean order — e.g. "3x Samosa" and
+  // "2x Pizza (Half)" as separate lines, never merged with a different variant.
   const consolidated = new Map();
   for (const i of room.items) {
-    const key = String(i.menuItem);
+    const key = String(i.menuItem) + '|' + String(i.variantId || '');
     if (!consolidated.has(key)) {
-      consolidated.set(key, { menuItemId: i.menuItem, quantity: 0, names: new Set() });
+      consolidated.set(key, { menuItemId: i.menuItem, variantId: i.variantId, quantity: 0, names: new Set() });
     }
     const entry = consolidated.get(key);
     entry.quantity += i.quantity;
@@ -211,6 +224,7 @@ router.post('/:code/checkout', asyncHandler(async (req, res) => {
     user: req.user,
     items: Array.from(consolidated.values()).map(e => ({
       menuItemId: e.menuItemId,
+      variantId: e.variantId,
       quantity: e.quantity,
       addedByName: Array.from(e.names).join(', '),
     })),

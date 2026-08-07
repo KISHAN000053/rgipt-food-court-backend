@@ -7,6 +7,8 @@ const partyRoomSchema = new mongoose.Schema({
   items: [{
     menuItem: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItem', required: true },
     name: String,
+    variantId: mongoose.Schema.Types.ObjectId, // set if the item had multiple price options
+    variantName: String,
     price: Number,
     shop: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop' },
     shopName: String,
