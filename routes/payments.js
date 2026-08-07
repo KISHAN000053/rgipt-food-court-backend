@@ -91,12 +91,23 @@ router.post('/razorpay/webhook', asyncHandler(async (req, res) => {
     const payment = event.payload.payment.entity;
     const razorpayOrderId = payment.order_id;
 
-    // Idempotent: if already marked paid (e.g. the /verify call beat the webhook
-    // here), this just confirms — it never double-processes.
-    await Order.updateMany(
-      { razorpayOrderId, paymentStatus: { $ne: 'paid' } },
-      { paymentStatus: 'paid', razorpayPaymentId: payment.id }
-    );
+    // Idempotent: only orders not already marked paid get updated (and notified) here,
+    // so if /verify already handled it, this doesn't double-notify the shop.
+    const newlyPaid = await Order.find({ razorpayOrderId, paymentStatus: { $ne: 'paid' } });
+
+    if (newlyPaid.length > 0) {
+      await Order.updateMany(
+        { razorpayOrderId, paymentStatus: { $ne: 'paid' } },
+        { paymentStatus: 'paid', razorpayPaymentId: payment.id }
+      );
+
+      const io = req.app.get('io');
+      if (io) {
+        for (const order of newlyPaid) {
+          io.to(`shop-${order.shop}`).emit('newOrder', order);
+        }
+      }
+    }
   }
 
   // Always 200 quickly so Razorpay doesn't retry unnecessarily.

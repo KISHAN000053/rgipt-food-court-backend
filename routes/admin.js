@@ -8,6 +8,7 @@ const Announcement = require('../models/Announcement');
 const Settings = require('../models/Settings');
 const Hostel = require('../models/Hostel');
 const { requireAdmin } = require('../middleware/auth');
+const { CONFIRMED_PAYMENT_FILTER } = require('../utils/orderFilters');
 const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(requireAdmin);
@@ -16,7 +17,7 @@ router.get('/payouts', asyncHandler(async (req, res) => {
   // Owed to each shop = their order subtotals (real prices they set). Platform revenue
   // is the separate processing fee (2%) + service fee, not a price difference.
   const payouts = await Order.aggregate([
-    { $match: { status: { $ne: 'cancelled' } } },
+    { $match: { status: { $ne: 'cancelled' }, ...CONFIRMED_PAYMENT_FILTER } },
     {
       $group: {
         _id: '$shop',
@@ -39,7 +40,7 @@ router.get('/payouts', asyncHandler(async (req, res) => {
   ]);
 
   const feeAgg = await Order.aggregate([
-    { $match: { status: { $ne: 'cancelled' } } },
+    { $match: { status: { $ne: 'cancelled' }, ...CONFIRMED_PAYMENT_FILTER } },
     { $group: {
       _id: null,
       totalServiceFees: { $sum: '$serviceFee' },
@@ -242,7 +243,7 @@ router.delete('/hostels/:id', asyncHandler(async (req, res) => {
 }));
 
 router.get('/orders', asyncHandler(async (req, res) => {
-  const orders = await Order.find().sort({ createdAt: -1 }).populate('shop', 'name').populate('user', 'name email');
+  const orders = await Order.find(CONFIRMED_PAYMENT_FILTER).sort({ createdAt: -1 }).populate('shop', 'name').populate('user', 'name email');
   res.json(orders);
 }));
 
@@ -255,7 +256,7 @@ router.get('/analytics', asyncHandler(async (req, res) => {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  const todaysOrders = await Order.find({ createdAt: { $gte: startOfDay } });
+  const todaysOrders = await Order.find({ createdAt: { $gte: startOfDay }, ...CONFIRMED_PAYMENT_FILTER });
 
   const statusCounts = todaysOrders.reduce((acc, order) => {
     acc[order.status] = (acc[order.status] || 0) + 1;
@@ -279,10 +280,10 @@ router.get('/analytics', asyncHandler(async (req, res) => {
   // All-time totals for the dashboard cards.
   const [revenueAgg, totalOrders, totalUsers, totalShops] = await Promise.all([
     Order.aggregate([
-      { $match: { status: { $ne: 'cancelled' } } },
+      { $match: { status: { $ne: 'cancelled' }, ...CONFIRMED_PAYMENT_FILTER } },
       { $group: { _id: null, sum: { $sum: '$total' } } }
     ]),
-    Order.countDocuments({ status: { $ne: 'cancelled' } }),
+    Order.countDocuments({ status: { $ne: 'cancelled' }, ...CONFIRMED_PAYMENT_FILTER }),
     User.countDocuments(),
     Shop.countDocuments({ isPermanentlyClosed: false }),
   ]);

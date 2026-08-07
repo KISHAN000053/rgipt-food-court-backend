@@ -109,7 +109,10 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
 
     createdOrders.push(order);
 
-    if (io) {
+    // Cash orders are "confirmed" the moment they're placed. Razorpay orders are not —
+    // the shop shouldn't see (or start preparing) an order nobody has paid for yet.
+    // The payments routes emit 'newOrder' themselves once payment is actually verified.
+    if (io && paymentMethod !== 'razorpay') {
       io.to(`shop-${shopId}`).emit('newOrder', order);
     }
   }

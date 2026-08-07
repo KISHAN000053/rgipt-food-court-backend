@@ -4,6 +4,7 @@ const Order = require('../models/Order');
 const MenuItem = require('../models/MenuItem');
 const { requireShopOwner } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { CONFIRMED_PAYMENT_FILTER } = require('../utils/orderFilters');
 
 router.use(requireShopOwner);
 
@@ -39,7 +40,8 @@ router.get('/orders', asyncHandler(async (req, res) => {
   
   const orders = await Order.find({
     shop: req.shop._id,
-    createdAt: { $gte: startOfDay }
+    createdAt: { $gte: startOfDay },
+    ...CONFIRMED_PAYMENT_FILTER,
   }).sort({ createdAt: -1 }).populate('user', 'name phone roomNumber hostel');
   
   res.json(orders);
@@ -48,7 +50,8 @@ router.get('/orders', asyncHandler(async (req, res) => {
 router.get('/orders/pending', asyncHandler(async (req, res) => {
   const orders = await Order.find({
     shop: req.shop._id,
-    status: { $in: ['pending', 'accepted', 'preparing'] }
+    status: { $in: ['pending', 'accepted', 'preparing'] },
+    ...CONFIRMED_PAYMENT_FILTER,
   }).sort({ createdAt: 1 }).populate('user', 'name phone roomNumber hostel');
   
   res.json(orders);
@@ -174,7 +177,8 @@ router.get('/stats', asyncHandler(async (req, res) => {
   const orders = await Order.find({
     shop: req.shop._id,
     createdAt: { $gte: startOfDay },
-    status: { $ne: 'cancelled' }
+    status: { $ne: 'cancelled' },
+    ...CONFIRMED_PAYMENT_FILTER,
   });
   
   const revenue = orders.reduce((acc, order) => acc + order.total, 0);
@@ -189,7 +193,7 @@ router.get('/stats', asyncHandler(async (req, res) => {
 // which is what they actually get paid — platform fees are excluded.
 router.get('/report', asyncHandler(async (req, res) => {
   const { from, to } = req.query;
-  const match = { shop: req.shop._id, status: { $ne: 'cancelled' } };
+  const match = { shop: req.shop._id, status: { $ne: 'cancelled' }, ...CONFIRMED_PAYMENT_FILTER };
 
   if (from || to) {
     match.createdAt = {};
