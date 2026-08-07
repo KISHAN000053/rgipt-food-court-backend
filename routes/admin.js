@@ -88,7 +88,7 @@ router.get('/shops', asyncHandler(async (req, res) => {
   res.json(shops);
 }));
 
-const SHOP_FIELDS = ['name', 'description', 'isOpen', 'estimatedPrepTime', 'minOrder', 'ownerEmail', 'categories'];
+const SHOP_FIELDS = ['name', 'description', 'isOpen', 'menuEditingEnabled', 'estimatedPrepTime', 'minOrder', 'ownerEmail', 'categories'];
 
 const buildShopPayload = async (body) => {
   const payload = {};

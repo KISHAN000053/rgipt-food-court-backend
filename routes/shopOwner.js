@@ -15,6 +15,7 @@ router.get('/shop', asyncHandler(async (req, res) => {
     name: req.shop.name,
     isOpen: req.shop.isOpen,
     isPermanentlyClosed: req.shop.isPermanentlyClosed,
+    menuEditingEnabled: req.shop.menuEditingEnabled,
   });
 }));
 
@@ -154,6 +155,9 @@ const buildMenuPayload = (body) => {
 };
 
 router.post('/menu', asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin' && !req.shop.menuEditingEnabled) {
+    return res.status(403).json({ message: 'Menu editing has been restricted by admin for your shop. Contact admin to add items.' });
+  }
   const payload = buildMenuPayload(req.body);
   if (!payload.name || !payload.category) {
     return res.status(400).json({ message: 'Name and category are required' });
@@ -172,6 +176,9 @@ router.post('/menu', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/menu/:itemId', asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin' && !req.shop.menuEditingEnabled) {
+    return res.status(403).json({ message: 'Menu editing has been restricted by admin for your shop. Contact admin to remove items.' });
+  }
   const item = await MenuItem.findOneAndDelete({ _id: req.params.itemId, shop: req.shop._id });
   if (!item) {
     return res.status(404).json({ message: 'Menu item not found' });
@@ -181,6 +188,17 @@ router.delete('/menu/:itemId', asyncHandler(async (req, res) => {
 
 router.patch('/menu/:itemId', asyncHandler(async (req, res) => {
   const payload = buildMenuPayload(req.body);
+
+  if (req.user.role !== 'admin' && !req.shop.menuEditingEnabled) {
+    // Even when restricted, a shop owner can still mark something in/out of stock —
+    // that's day-to-day operations, not "editing the menu". Anything beyond that
+    // (name, category, price, variants, description) is blocked.
+    const onlyTouchesAvailability = Object.keys(payload).every(k => k === 'isAvailable');
+    if (!onlyTouchesAvailability) {
+      return res.status(403).json({ message: 'Menu editing has been restricted by admin for your shop. You can still mark items in or out of stock. Contact admin for other changes.' });
+    }
+  }
+
   const pricingError = validateMenuPricing(payload);
   if (pricingError) return res.status(400).json({ message: pricingError });
 

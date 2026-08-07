@@ -4,6 +4,9 @@ const shopSchema = new mongoose.Schema({
   name: { type: String, required: true },
   description: String,
   isOpen: { type: Boolean, default: true },
+  // Admin can restrict a shop owner from adding/removing items or changing prices,
+  // without affecting their ability to toggle stock or fix a typo in a name.
+  menuEditingEnabled: { type: Boolean, default: true },
   isPermanentlyClosed: { type: Boolean, default: false },
   estimatedPrepTime: Number,
   minOrder: Number,
