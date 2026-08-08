@@ -128,7 +128,7 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
       serviceFee,
       processingFee,
       total,
-      paymentMethod: paymentMethod || 'cash',
+      paymentMethod: paymentMethod || 'razorpay',
       specialInstructions,
       partyCode: partyCode || undefined,
     });

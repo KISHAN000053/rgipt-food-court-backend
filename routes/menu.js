@@ -20,11 +20,4 @@ router.get('/shops/:id/addons', asyncHandler(async (req, res) => {
   res.json(addons);
 }));
 
-router.get('/search', asyncHandler(async (req, res) => {
-  const { q } = req.query;
-  if (!q) return res.json([]);
-  const items = await MenuItem.find({ $text: { $search: q }, isEnabled: true }).populate('shop', 'name');
-  res.json(items);
-}));
-
 module.exports = router;

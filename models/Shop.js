@@ -8,8 +8,6 @@ const shopSchema = new mongoose.Schema({
   // without affecting their ability to toggle stock or fix a typo in a name.
   menuEditingEnabled: { type: Boolean, default: true },
   isPermanentlyClosed: { type: Boolean, default: false },
-  estimatedPrepTime: Number,
-  minOrder: Number,
   ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   ownerEmail: String,
   categories: [String],
