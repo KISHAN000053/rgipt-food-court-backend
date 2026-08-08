@@ -35,6 +35,8 @@ const shapeRoom = (room, currentUserId) => {
       _id: item._id,
       name: item.name,
       variantName: item.variantName,
+      isAddon: item.isAddon,
+      forProductName: item.forProductName,
       price: item.price,
       quantity: item.quantity,
       shopName: item.shopName,
@@ -128,7 +130,7 @@ router.get('/:code', asyncHandler(async (req, res) => {
 
 // A guest (or host) adds an item.
 router.post('/:code/items', asyncHandler(async (req, res) => {
-  const { menuItemId, quantity, variantId } = req.body;
+  const { menuItemId, quantity, variantId, forProductName } = req.body;
   const room = await PartyRoom.findOne({ code: req.params.code.toUpperCase() });
   if (!room) return res.status(404).json({ message: 'Party room not found.' });
   if (room.status !== 'open') return res.status(400).json({ message: 'This party order has already been placed.' });
@@ -146,11 +148,13 @@ router.post('/:code/items', asyncHandler(async (req, res) => {
 
   const qty = Math.max(1, Number(quantity) || 1);
 
-  // If this person already added the exact same item + variant, just bump the quantity.
+  // If this person already added the exact same item + variant + "for product" tag,
+  // just bump the quantity. An add-on tagged for a different product stays a separate line.
   const existing = room.items.find(i =>
     String(i.menuItem) === String(menuItem._id) &&
     String(i.addedBy) === String(req.user._id) &&
-    String(i.variantId || '') === String(variantId || '')
+    String(i.variantId || '') === String(variantId || '') &&
+    String(i.forProductName || '') === String(forProductName || '')
   );
   if (existing) {
     existing.quantity += qty;
@@ -160,6 +164,8 @@ router.post('/:code/items', asyncHandler(async (req, res) => {
       name: menuItem.name,
       variantId: menuItem.hasVariants ? variantId : undefined,
       variantName: resolved.variantName,
+      isAddon: !!menuItem.isAddon,
+      forProductName: menuItem.isAddon ? (forProductName || undefined) : undefined,
       price: resolved.price,
       shop: shop._id,
       shopName: shop.name,
@@ -211,9 +217,9 @@ router.post('/:code/checkout', asyncHandler(async (req, res) => {
   // "2x Pizza (Half)" as separate lines, never merged with a different variant.
   const consolidated = new Map();
   for (const i of room.items) {
-    const key = String(i.menuItem) + '|' + String(i.variantId || '');
+    const key = String(i.menuItem) + '|' + String(i.variantId || '') + '|' + String(i.forProductName || '');
     if (!consolidated.has(key)) {
-      consolidated.set(key, { menuItemId: i.menuItem, variantId: i.variantId, quantity: 0, names: new Set() });
+      consolidated.set(key, { menuItemId: i.menuItem, variantId: i.variantId, forProductName: i.forProductName, quantity: 0, names: new Set() });
     }
     const entry = consolidated.get(key);
     entry.quantity += i.quantity;
@@ -225,6 +231,7 @@ router.post('/:code/checkout', asyncHandler(async (req, res) => {
     items: Array.from(consolidated.values()).map(e => ({
       menuItemId: e.menuItemId,
       variantId: e.variantId,
+      forProductName: e.forProductName,
       quantity: e.quantity,
       addedByName: Array.from(e.names).join(', '),
     })),

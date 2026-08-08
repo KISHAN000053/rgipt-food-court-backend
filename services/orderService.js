@@ -68,6 +68,7 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
       menuItem,
       quantity: cartItem.quantity,
       addedByName: cartItem.addedByName,
+      forProductName: cartItem.forProductName,
       price: resolved.price,
       variantName: resolved.variantName,
     });
@@ -97,7 +98,7 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
     const cartLines = byShop.get(shopId);
 
     let subtotal = 0;
-    const orderItems = cartLines.map(({ menuItem, quantity, addedByName, price, variantName }) => {
+    const orderItems = cartLines.map(({ menuItem, quantity, addedByName, forProductName, price, variantName }) => {
       subtotal += price * quantity;
       return {
         menuItem: menuItem._id,
@@ -107,6 +108,7 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
         quantity,
         variantName,
         isAddon: menuItem.isAddon || undefined,
+        forProductName: forProductName || undefined,
         addedByName: addedByName || undefined,
       };
     });

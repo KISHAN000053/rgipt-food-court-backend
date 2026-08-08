@@ -9,6 +9,8 @@ const partyRoomSchema = new mongoose.Schema({
     name: String,
     variantId: mongoose.Schema.Types.ObjectId, // set if the item had multiple price options
     variantName: String,
+    isAddon: { type: Boolean, default: false },
+    forProductName: String, // which dish this add-on was picked for, e.g. "Witcher Burrito"
     price: Number,
     shop: { type: mongoose.Schema.Types.ObjectId, ref: 'Shop' },
     shopName: String,
