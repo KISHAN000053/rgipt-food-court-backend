@@ -5,6 +5,7 @@ const MenuItem = require('../models/MenuItem');
 const { requireShopOwner } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { CONFIRMED_PAYMENT_FILTER } = require('../utils/orderFilters');
+const { refundOrderIfNeeded, ALLOWED_TRANSITIONS } = require('../services/orderService');
 
 router.use(requireShopOwner);
 
@@ -58,17 +59,6 @@ router.get('/orders/pending', asyncHandler(async (req, res) => {
   res.json(orders);
 }));
 
-// Simple, shop-friendly flow: pending -> accepted -> [preparing] -> delivery_initiated.
-// Preparing is optional — a shop can go straight from accepted to delivery_initiated.
-// Cancelled is allowed from any non-terminal state.
-const ALLOWED_TRANSITIONS = {
-  pending: ['accepted', 'cancelled'],
-  accepted: ['preparing', 'delivery_initiated', 'cancelled'],
-  preparing: ['delivery_initiated', 'cancelled'],
-  delivery_initiated: [],
-  cancelled: [],
-};
-
 router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
   const { status } = req.body;
   const existing = await Order.findOne({ _id: req.params.id, shop: req.shop._id });
@@ -83,6 +73,13 @@ router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
 
   existing.status = status;
   await existing.save();
+
+  // Cancelling a paid order automatically refunds the food price (fees are kept).
+  // This never blocks the cancellation itself — a refund failure is only marked
+  // on the order for later follow-up.
+  if (status === 'cancelled') {
+    await refundOrderIfNeeded(existing);
+  }
   
   const io = req.app.get('io');
   if (io) {

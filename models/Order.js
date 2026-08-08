@@ -30,6 +30,12 @@ const orderSchema = new mongoose.Schema({
   paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' },
   razorpayOrderId: String,
   razorpayPaymentId: String,
+  // Refund tracking — set automatically when a paid order is cancelled.
+  refundStatus: { type: String, enum: ['none', 'processing', 'completed', 'failed'], default: 'none' },
+  refundId: String,
+  refundAmount: Number,
+  refundedAt: Date,
+  refundFailReason: String,
   specialInstructions: String,
   partyCode: String, // set when this order came from a party room
 }, { timestamps: true });

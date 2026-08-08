@@ -59,4 +59,16 @@ function verifyWebhookSignature({ rawBody, signature }) {
   return expected === signature;
 }
 
-module.exports = { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature };
+// Refunds part of a captured payment (used when a paid order is cancelled — we
+// refund only the subtotal, keeping the service and processing fees).
+// notes.reason helps identify refunds later in the Razorpay dashboard.
+async function createRefund({ paymentId, amountRupees, notes }) {
+  const client = getClient();
+  const refund = await client.payments.refund(paymentId, {
+    amount: Math.round(amountRupees * 100), // paise
+    notes,
+  });
+  return refund; // { id, status, ... }
+}
+
+module.exports = { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, createRefund };

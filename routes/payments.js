@@ -110,6 +110,23 @@ router.post('/razorpay/webhook', asyncHandler(async (req, res) => {
     }
   }
 
+  // Confirms a refund actually completed (or failed) on Razorpay's side — this is
+  // the real source of truth, same principle as payment.captured above. We initiate
+  // refunds ourselves and mark them 'processing'; this webhook is what finalizes it.
+  if (event.event === 'refund.processed' || event.event === 'refund.failed') {
+    const refund = event.payload.refund.entity;
+    const order = await Order.findOne({ refundId: refund.id });
+
+    if (order) {
+      order.refundStatus = event.event === 'refund.processed' ? 'completed' : 'failed';
+      if (event.event === 'refund.processed') order.refundedAt = new Date();
+      await order.save();
+
+      const io = req.app.get('io');
+      if (io) io.to(`user-${order.user}`).emit('orderStatusChanged', order);
+    }
+  }
+
   // Always 200 quickly so Razorpay doesn't retry unnecessarily.
   res.json({ received: true });
 }));

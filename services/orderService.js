@@ -4,6 +4,19 @@ const MenuItem = require('../models/MenuItem');
 const Shop = require('../models/Shop');
 const Settings = require('../models/Settings');
 
+// Simple, shop-friendly flow: pending -> accepted -> [preparing] -> delivery_initiated.
+// Preparing is optional — a shop can go straight from accepted to delivery_initiated.
+// Cancelled is allowed from any non-terminal state. Shared between the shop-owner and
+// admin order-status routes so the rules can never drift between them.
+const ALLOWED_TRANSITIONS = {
+  pending: ['accepted', 'cancelled'],
+  accepted: ['preparing', 'delivery_initiated', 'cancelled'],
+  preparing: ['delivery_initiated', 'cancelled'],
+  delivery_initiated: [],
+  cancelled: [],
+};
+
+
 // Resolves the actual price + display name for a cart line against its menu item.
 // For a variant item, the student must have picked one of the item's options —
 // otherwise this returns an error so checkout can't silently default to something.
@@ -148,4 +161,35 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
   return { ok: true, groupId, orders: createdOrders };
 }
 
-module.exports = { placeOrder, resolveLinePrice };
+/**
+ * Refunds the subtotal of a paid order (keeps service + processing fees) when it's
+ * cancelled. Called automatically from the status-change route — never blocks the
+ * cancellation itself. If the refund call fails, the order stays cancelled and is
+ * marked refundStatus: 'failed' so it's visible, not silently lost.
+ */
+async function refundOrderIfNeeded(order) {
+  // Nothing to refund — never paid, or already handled.
+  if (order.paymentMethod !== 'razorpay' || order.paymentStatus !== 'paid') return;
+  if (order.refundStatus === 'processing' || order.refundStatus === 'completed') return;
+  if (!order.razorpayPaymentId || !order.subtotal || order.subtotal <= 0) return;
+
+  const { createRefund } = require('./razorpayService'); // lazy require avoids a circular import
+
+  try {
+    const refund = await createRefund({
+      paymentId: order.razorpayPaymentId,
+      amountRupees: order.subtotal,
+      notes: { orderId: String(order._id), reason: 'Order cancelled — food price refunded, fees kept' },
+    });
+    order.refundStatus = 'processing'; // confirmed 'completed' once the refund.processed webhook arrives
+    order.refundId = refund.id;
+    order.refundAmount = order.subtotal;
+    await order.save();
+  } catch (err) {
+    order.refundStatus = 'failed';
+    order.refundFailReason = err.message || 'Refund request failed';
+    await order.save();
+  }
+}
+
+module.exports = { placeOrder, resolveLinePrice, refundOrderIfNeeded, ALLOWED_TRANSITIONS };
