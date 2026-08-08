@@ -12,6 +12,7 @@ const orderSchema = new mongoose.Schema({
     basePrice: Number,
     quantity: Number,
     variantName: String, // e.g. "Half" — set only if the item had multiple price options
+    isAddon: Boolean, // true if this line was an add-on (e.g. extra Egg, Cheese)
     addedByName: String, // for party orders: who in the group asked for this item
   }],
   subtotal: Number,

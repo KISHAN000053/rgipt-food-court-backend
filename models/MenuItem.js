@@ -19,6 +19,10 @@ const menuItemSchema = new mongoose.Schema({
   isAvailable: { type: Boolean, default: true },
   isEnabled: { type: Boolean, default: true },
   needsVerification: { type: Boolean, default: false },
+  // Add-ons (e.g. Egg, Cheese, Chicken) are simple extras a student can add alongside
+  // whatever's already in their cart from this shop. Always single-price, and shown
+  // through a separate "Add-ons" picker rather than the regular category menu.
+  isAddon: { type: Boolean, default: false },
 }, { timestamps: true });
 
 menuItemSchema.index({ name: 'text', description: 'text', category: 'text' });

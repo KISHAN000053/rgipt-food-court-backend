@@ -88,7 +88,7 @@ router.get('/shops', asyncHandler(async (req, res) => {
   res.json(shops);
 }));
 
-const SHOP_FIELDS = ['name', 'description', 'isOpen', 'menuEditingEnabled', 'estimatedPrepTime', 'minOrder', 'ownerEmail', 'categories'];
+const SHOP_FIELDS = ['name', 'description', 'isOpen', 'isPermanentlyClosed', 'menuEditingEnabled', 'estimatedPrepTime', 'minOrder', 'ownerEmail', 'categories'];
 
 const buildShopPayload = async (body) => {
   const payload = {};
@@ -155,19 +155,28 @@ function validateMenuPricing(payload) {
   return null;
 }
 
-const ADMIN_MENU_FIELDS = ['name', 'price', 'hasVariants', 'variants', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled', 'shop'];
+const ADMIN_MENU_FIELDS = ['name', 'price', 'hasVariants', 'variants', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled', 'isAddon', 'shop'];
 const buildAdminMenuPayload = (body) => {
   const payload = {};
   for (const field of ADMIN_MENU_FIELDS) {
     if (body[field] !== undefined) payload[field] = body[field];
+  }
+  // Add-ons don't have a meaningful category or variant pricing — keep them simple.
+  if (payload.isAddon) {
+    payload.category = 'Add-ons';
+    payload.hasVariants = false;
+    payload.variants = [];
   }
   return payload;
 };
 
 router.post('/menu', asyncHandler(async (req, res) => {
   const payload = buildAdminMenuPayload(req.body);
-  if (!payload.name || !payload.category || !payload.shop) {
-    return res.status(400).json({ message: 'Name, category and shop are required' });
+  if (!payload.name || !payload.shop) {
+    return res.status(400).json({ message: 'Name and shop are required' });
+  }
+  if (!payload.isAddon && !payload.category) {
+    return res.status(400).json({ message: 'Category is required' });
   }
   if (!payload.hasVariants && payload.price === undefined) {
     return res.status(400).json({ message: 'Price is required' });

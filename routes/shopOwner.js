@@ -97,7 +97,7 @@ router.get('/menu', asyncHandler(async (req, res) => {
   res.json(items);
 }));
 
-const MENU_FIELDS = ['name', 'price', 'hasVariants', 'variants', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled'];
+const MENU_FIELDS = ['name', 'price', 'hasVariants', 'variants', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled', 'isAddon'];
 
 // Shop owners may only change prices between 4:00 and 14:00 (IST). Everything else
 // about an item (availability, name, category) can be edited any time.
@@ -151,6 +151,11 @@ const buildMenuPayload = (body) => {
   for (const field of MENU_FIELDS) {
     if (body[field] !== undefined) payload[field] = body[field];
   }
+  if (payload.isAddon) {
+    payload.category = 'Add-ons';
+    payload.hasVariants = false;
+    payload.variants = [];
+  }
   return payload;
 };
 
@@ -159,8 +164,11 @@ router.post('/menu', asyncHandler(async (req, res) => {
     return res.status(403).json({ message: 'Menu editing has been restricted by admin for your shop. Contact admin to add items.' });
   }
   const payload = buildMenuPayload(req.body);
-  if (!payload.name || !payload.category) {
-    return res.status(400).json({ message: 'Name and category are required' });
+  if (!payload.name) {
+    return res.status(400).json({ message: 'Name is required' });
+  }
+  if (!payload.isAddon && !payload.category) {
+    return res.status(400).json({ message: 'Category is required' });
   }
   if (!payload.hasVariants && payload.price === undefined) {
     return res.status(400).json({ message: 'Price is required' });

@@ -106,6 +106,7 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
         basePrice: price,
         quantity,
         variantName,
+        isAddon: menuItem.isAddon || undefined,
         addedByName: addedByName || undefined,
       };
     });
