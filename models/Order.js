@@ -14,7 +14,6 @@ const orderSchema = new mongoose.Schema({
     variantName: String, // e.g. "Half" — set only if the item had multiple price options
     isAddon: Boolean, // true if this line was an add-on (e.g. extra Egg, Cheese)
     forProductName: String, // which dish this add-on was picked for, e.g. "Witcher Burrito"
-    addedByName: String, // for party orders: who in the group asked for this item
   }],
   subtotal: Number,
   serviceFee: { type: Number, default: 2 },
@@ -37,7 +36,6 @@ const orderSchema = new mongoose.Schema({
   refundedAt: Date,
   refundFailReason: String,
   specialInstructions: String,
-  partyCode: String, // set when this order came from a party room
 }, { timestamps: true });
 
 // Indexes for the queries that actually run often, so they don't scan the whole collection:

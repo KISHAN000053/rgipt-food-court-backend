@@ -16,7 +16,6 @@ const ALLOWED_TRANSITIONS = {
   cancelled: [],
 };
 
-
 // Resolves the actual price + display name for a cart line against its menu item.
 // For a variant item, the student must have picked one of the item's options —
 // otherwise this returns an error so checkout can't silently default to something.
@@ -32,36 +31,26 @@ function resolveLinePrice(menuItem, variantId) {
 }
 
 /**
- * Places an order from a list of cart lines, splitting per shop but charging the
- * service fee and processing fee only once for the whole checkout.
- *
- * Used by both normal checkout and party-room checkout so the money logic can never
- * drift between the two.
+ * Validates a cart and computes exactly what it costs — WITHOUT writing anything to
+ * the database. This is the only step that runs before payment. Nothing is saved to
+ * the orders collection until payment is actually confirmed (see createOrdersFromPricedCart).
  *
  * @param {Object} opts
- * @param {Object} opts.user          - the paying user (host, for party orders)
- * @param {Array}  opts.items         - [{ menuItemId, quantity, variantId?, addedByName? }]
- * @param {String} opts.orderType     - 'takeaway' | 'hostel'
- * @param {String} opts.paymentMethod
- * @param {String} opts.specialInstructions
- * @param {Object} opts.io            - socket.io instance (optional)
- * @param {String} opts.partyCode     - set for party orders (optional)
- * @returns {Promise<{ok: true, groupId, orders} | {ok: false, status, message}>}
+ * @param {Object} opts.user      - the paying user
+ * @param {Array}  opts.items     - [{ menuItemId, quantity, variantId?, forProductName? }]
+ * @param {String} opts.orderType - 'takeaway' | 'hostel'
+ * @returns {Promise<{ok: true, type, byShop, totalRupees} | {ok: false, status, message}>}
  */
-async function placeOrder({ user, items, orderType, paymentMethod, specialInstructions, io, partyCode }) {
+async function priceCart({ user, items, orderType }) {
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, status: 400, message: 'Cart is empty' };
   }
 
   const type = orderType === 'takeaway' ? 'takeaway' : 'hostel';
 
-  // Seniors don't get hostel delivery at all — takeaway only. Legacy accounts from
-  // before isJunior existed (null/undefined, neither true nor false) are left alone
-  // rather than newly blocked.
   if (type === 'hostel' && user.isJunior === false) {
     return { ok: false, status: 400, message: 'Hostel delivery is only available for Juniors. Please choose Takeaway instead.' };
   }
-
   if (type === 'hostel' && (!user.hostel || !user.roomNumber)) {
     return { ok: false, status: 400, message: 'Please set your hostel and room in your profile before ordering hostel delivery.' };
   }
@@ -87,7 +76,6 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
     byShop.get(shopKey).push({
       menuItem,
       quantity: cartItem.quantity,
-      addedByName: cartItem.addedByName,
       forProductName: cartItem.forProductName,
       price: resolved.price,
       variantName: resolved.variantName,
@@ -109,7 +97,36 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
     return sum + lines.reduce((s, { price, quantity }) => s + price * quantity, 0);
   }, 0);
   const processingFeeTotal = Math.round(cartSubtotal * (settings.razorpaySurchargePercent / 100) * 100) / 100;
+  const totalRupees = Math.round((cartSubtotal + settings.serviceFee + processingFeeTotal) * 100) / 100;
 
+  return {
+    ok: true,
+    type,
+    byShop,
+    shopIds,
+    serviceFee: settings.serviceFee,
+    processingFeeTotal,
+    totalRupees,
+  };
+}
+
+/**
+ * Actually writes orders to the database, from an already-priced cart. Only called
+ * once payment is confirmed (paid) — this is the single place a row is ever created
+ * in the orders collection, so nothing unpaid or abandoned ever lands there.
+ *
+ * @param {Object} opts
+ * @param {Object} opts.user
+ * @param {Object} opts.priced             - the result of priceCart({ ok: true, ... })
+ * @param {String} opts.paymentMethod
+ * @param {String} opts.razorpayOrderId
+ * @param {String} opts.razorpayPaymentId
+ * @param {String} opts.specialInstructions
+ * @param {Object} opts.io
+ * @returns {Promise<{groupId, orders}>}
+ */
+async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpayOrderId, razorpayPaymentId, specialInstructions, io }) {
+  const { type, byShop, shopIds, serviceFee, processingFeeTotal } = priced;
   const groupId = 'GRP-' + crypto.randomBytes(6).toString('hex');
   const createdOrders = [];
 
@@ -118,7 +135,7 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
     const cartLines = byShop.get(shopId);
 
     let subtotal = 0;
-    const orderItems = cartLines.map(({ menuItem, quantity, addedByName, forProductName, price, variantName }) => {
+    const orderItems = cartLines.map(({ menuItem, quantity, forProductName, price, variantName }) => {
       subtotal += price * quantity;
       return {
         menuItem: menuItem._id,
@@ -129,14 +146,13 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
         variantName,
         isAddon: menuItem.isAddon || undefined,
         forProductName: forProductName || undefined,
-        addedByName: addedByName || undefined,
       };
     });
     subtotal = Math.round(subtotal * 100) / 100;
 
-    const serviceFee = i === 0 ? settings.serviceFee : 0;
-    const processingFee = i === 0 ? processingFeeTotal : 0;
-    const total = Math.round((subtotal + serviceFee + processingFee) * 100) / 100;
+    const lineServiceFee = i === 0 ? serviceFee : 0;
+    const lineProcessingFee = i === 0 ? processingFeeTotal : 0;
+    const total = Math.round((subtotal + lineServiceFee + lineProcessingFee) * 100) / 100;
     const orderNumber = 'ORD-' + String(Date.now() % 1000000).padStart(6, '0') + '-' + i;
 
     const order = await Order.create({
@@ -147,25 +163,24 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
       items: orderItems,
       orderType: type,
       subtotal,
-      serviceFee,
-      processingFee,
+      serviceFee: lineServiceFee,
+      processingFee: lineProcessingFee,
       total,
       paymentMethod: paymentMethod || 'razorpay',
+      paymentStatus: 'paid', // this function only ever runs after payment is confirmed
+      razorpayOrderId,
+      razorpayPaymentId,
       specialInstructions,
-      partyCode: partyCode || undefined,
     });
 
     createdOrders.push(order);
 
-    // Cash orders are "confirmed" the moment they're placed. Razorpay orders are not —
-    // the shop shouldn't see (or start preparing) an order nobody has paid for yet.
-    // The payments routes emit 'newOrder' themselves once payment is actually verified.
-    if (io && paymentMethod !== 'razorpay') {
+    if (io) {
       io.to(`shop-${shopId}`).emit('newOrder', order);
     }
   }
 
-  return { ok: true, groupId, orders: createdOrders };
+  return { groupId, orders: createdOrders };
 }
 
 /**
@@ -175,12 +190,11 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
  * marked refundStatus: 'failed' so it's visible, not silently lost.
  */
 async function refundOrderIfNeeded(order) {
-  // Nothing to refund — never paid, or already handled.
   if (order.paymentMethod !== 'razorpay' || order.paymentStatus !== 'paid') return;
   if (order.refundStatus === 'processing' || order.refundStatus === 'completed') return;
   if (!order.razorpayPaymentId || !order.subtotal || order.subtotal <= 0) return;
 
-  const { createRefund } = require('./razorpayService'); // lazy require avoids a circular import
+  const { createRefund } = require('./razorpayService');
 
   try {
     const refund = await createRefund({
@@ -188,7 +202,7 @@ async function refundOrderIfNeeded(order) {
       amountRupees: order.subtotal,
       notes: { orderId: String(order._id), reason: 'Order cancelled — food price refunded, fees kept' },
     });
-    order.refundStatus = 'processing'; // confirmed 'completed' once the refund.processed webhook arrives
+    order.refundStatus = 'processing';
     order.refundId = refund.id;
     order.refundAmount = order.subtotal;
     await order.save();
@@ -199,4 +213,4 @@ async function refundOrderIfNeeded(order) {
   }
 }
 
-module.exports = { placeOrder, resolveLinePrice, refundOrderIfNeeded, ALLOWED_TRANSITIONS };
+module.exports = { priceCart, createOrdersFromPricedCart, resolveLinePrice, refundOrderIfNeeded, ALLOWED_TRANSITIONS };

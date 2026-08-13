@@ -1,34 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
-const MenuItem = require('../models/MenuItem');
-const Shop = require('../models/Shop');
-const Settings = require('../models/Settings');
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 
-const { placeOrder } = require('../services/orderService');
-
-// Normal checkout. Splitting per shop and fee handling live in the shared order
-// service so party checkout can't drift from this logic.
-router.post('/', requireAuth, asyncHandler(async (req, res) => {
-  const { items, specialInstructions, paymentMethod, orderType } = req.body;
-
-  const result = await placeOrder({
-    user: req.user,
-    items,
-    orderType,
-    paymentMethod,
-    specialInstructions,
-    io: req.app.get('io'),
-  });
-
-  if (!result.ok) {
-    return res.status(result.status).json({ message: result.message });
-  }
-
-  res.status(201).json({ groupId: result.groupId, orders: result.orders });
-}));
+// There is no POST '/' here anymore — an order is only ever created once payment is
+// confirmed, in routes/payments.js (finalizeCheckout). This route only ever reads
+// orders that already exist and were genuinely paid for.
 
 router.get('/my', requireAuth, asyncHandler(async (req, res) => {
   const orders = await Order.find({ user: req.user._id }).sort({ createdAt: -1 }).populate('shop', 'name');

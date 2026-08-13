@@ -1,38 +1,43 @@
 const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
+const PendingCheckout = require('../models/PendingCheckout');
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } = require('../services/razorpayService');
+const { priceCart, createOrdersFromPricedCart } = require('../services/orderService');
 
-// Given a groupId (a checkout may split into several sub-orders across shops),
-// create ONE Razorpay order for the combined total. All sub-orders in the group
-// stay 'pending' until payment is confirmed.
-router.post('/razorpay/create', requireAuth, asyncHandler(async (req, res) => {
-  const { groupId } = req.body;
-  if (!groupId) return res.status(400).json({ message: 'groupId is required' });
+// Prices the cart and creates a Razorpay order in one step. Nothing is written to the
+// orders collection here — only a short-lived PendingCheckout record that expires on
+// its own if payment is never completed. The order only gets created for real once
+// payment is confirmed, in finalizeCheckout() below.
+router.post('/razorpay/create-order', requireAuth, asyncHandler(async (req, res) => {
+  const { items, orderType, specialInstructions } = req.body;
 
-  const orders = await Order.find({ groupId, user: req.user._id });
-  if (orders.length === 0) return res.status(404).json({ message: 'Order group not found' });
-  if (orders.some(o => o.paymentStatus === 'paid')) {
-    return res.status(400).json({ message: 'This order has already been paid.' });
+  const priced = await priceCart({ user: req.user, items, orderType });
+  if (!priced.ok) {
+    return res.status(priced.status).json({ message: priced.message });
   }
-
-  const totalRupees = Math.round(orders.reduce((sum, o) => sum + o.total, 0) * 100) / 100;
 
   let rpOrder;
   try {
-    rpOrder = await createRazorpayOrder({ amountRupees: totalRupees, receipt: groupId });
+    rpOrder = await createRazorpayOrder({ amountRupees: priced.totalRupees, receipt: `chk-${req.user._id}-${Date.now()}` });
   } catch (err) {
     console.error('[Razorpay create order failed]', {
-      groupId,
-      amountRupees: totalRupees,
+      userId: req.user._id,
+      amountRupees: priced.totalRupees,
       razorpayError: err?.error || err?.message || err,
     });
     return res.status(502).json({ message: 'Could not start payment. Please try again.' });
   }
 
-  await Order.updateMany({ groupId, user: req.user._id }, { razorpayOrderId: rpOrder.id, paymentMethod: 'razorpay' });
+  await PendingCheckout.create({
+    user: req.user._id,
+    razorpayOrderId: rpOrder.id,
+    items,
+    orderType,
+    specialInstructions,
+  });
 
   res.json({
     razorpayOrderId: rpOrder.id,
@@ -42,10 +47,41 @@ router.post('/razorpay/create', requireAuth, asyncHandler(async (req, res) => {
   });
 }));
 
-// Called by the frontend right after Razorpay's checkout modal succeeds. This gives
-// the student instant confirmation in the UI, but it is NOT the final word — the
-// webhook below is what actually marks the order paid for good. If this call is
-// skipped or fails, the webhook still confirms payment on its own.
+// The single place an order actually gets created — only ever called once payment is
+// confirmed, by whichever of /verify or the webhook gets there first. Safe to call
+// twice: if the PendingCheckout is already gone, this is a no-op (idempotent).
+async function finalizeCheckout(razorpayOrderId, razorpayPaymentId, io) {
+  const pending = await PendingCheckout.findOne({ razorpayOrderId });
+  if (!pending) return null; // already finalized by the other path, or never existed
+
+  const priced = await priceCart({ user: pending.user, items: pending.items, orderType: pending.orderType });
+  if (!priced.ok) {
+    // Extremely unlikely (something changed between payment and finalization, e.g. a
+    // shop closed mid-payment) — remove the pending record so it doesn't retry forever,
+    // and surface this clearly rather than silently losing a paid transaction.
+    console.error('[Checkout finalize failed after payment]', { razorpayOrderId, reason: priced.message });
+    await pending.deleteOne();
+    return { failed: true, message: priced.message };
+  }
+
+  const { groupId, orders } = await createOrdersFromPricedCart({
+    user: { _id: pending.user },
+    priced,
+    paymentMethod: 'razorpay',
+    razorpayOrderId,
+    razorpayPaymentId,
+    specialInstructions: pending.specialInstructions,
+    io,
+  });
+
+  await pending.deleteOne();
+  return { groupId, orders };
+}
+
+// Called by the frontend right after Razorpay's checkout modal succeeds — gives the
+// student instant confirmation. Not the only word on it, though: the webhook below
+// independently confirms the same way, so a closed browser or failed callback here
+// still results in the order being created correctly.
 router.post('/razorpay/verify', requireAuth, asyncHandler(async (req, res) => {
   const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
   if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
@@ -57,27 +93,25 @@ router.post('/razorpay/verify', requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Payment verification failed.' });
   }
 
-  const orders = await Order.find({ razorpayOrderId, user: req.user._id });
-  if (orders.length === 0) return res.status(404).json({ message: 'Order not found' });
+  const result = await finalizeCheckout(razorpayOrderId, razorpayPaymentId, req.app.get('io'));
 
-  await Order.updateMany(
-    { razorpayOrderId, user: req.user._id },
-    { paymentStatus: 'paid', razorpayPaymentId }
-  );
-
-  const io = req.app.get('io');
-  if (io) {
-    for (const order of orders) {
-      io.to(`shop-${order.shop}`).emit('newOrder', order);
-    }
+  if (result?.failed) {
+    return res.status(409).json({ message: result.message });
+  }
+  if (!result) {
+    // Already finalized (likely the webhook beat us to it) — confirm using the real order.
+    const existing = await Order.findOne({ razorpayOrderId });
+    if (existing) return res.json({ message: 'Payment confirmed', groupId: existing.groupId });
+    return res.status(404).json({ message: 'Order not found' });
   }
 
-  res.json({ message: 'Payment confirmed' });
+  res.json({ message: 'Payment confirmed', groupId: result.groupId });
 }));
 
-// Razorpay webhook — the real source of truth for payment status. Needs the RAW
-// request body for signature verification, so this route is mounted with
-// express.raw() in server.js rather than the global express.json() parser.
+// Razorpay webhook — the real source of truth for payment status, and the fallback
+// that finalizes the order even if the student's browser closes right after paying.
+// Needs the RAW request body for signature verification, so this route is mounted
+// with express.raw() in server.js rather than the global express.json() parser.
 router.post('/razorpay/webhook', asyncHandler(async (req, res) => {
   const signature = req.headers['x-razorpay-signature'];
   let valid;
@@ -94,25 +128,7 @@ router.post('/razorpay/webhook', asyncHandler(async (req, res) => {
 
   if (event.event === 'payment.captured') {
     const payment = event.payload.payment.entity;
-    const razorpayOrderId = payment.order_id;
-
-    // Idempotent: only orders not already marked paid get updated (and notified) here,
-    // so if /verify already handled it, this doesn't double-notify the shop.
-    const newlyPaid = await Order.find({ razorpayOrderId, paymentStatus: { $ne: 'paid' } });
-
-    if (newlyPaid.length > 0) {
-      await Order.updateMany(
-        { razorpayOrderId, paymentStatus: { $ne: 'paid' } },
-        { paymentStatus: 'paid', razorpayPaymentId: payment.id }
-      );
-
-      const io = req.app.get('io');
-      if (io) {
-        for (const order of newlyPaid) {
-          io.to(`shop-${order.shop}`).emit('newOrder', order);
-        }
-      }
-    }
+    await finalizeCheckout(payment.order_id, payment.id, req.app.get('io'));
   }
 
   // Confirms a refund actually completed (or failed) on Razorpay's side — this is
