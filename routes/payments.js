@@ -24,6 +24,11 @@ router.post('/razorpay/create', requireAuth, asyncHandler(async (req, res) => {
   try {
     rpOrder = await createRazorpayOrder({ amountRupees: totalRupees, receipt: groupId });
   } catch (err) {
+    console.error('[Razorpay create order failed]', {
+      groupId,
+      amountRupees: totalRupees,
+      razorpayError: err?.error || err?.message || err,
+    });
     return res.status(502).json({ message: 'Could not start payment. Please try again.' });
   }
 

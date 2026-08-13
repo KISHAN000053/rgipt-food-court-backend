@@ -201,6 +201,33 @@ router.delete('/:code/items/:itemId', asyncHandler(async (req, res) => {
   res.json(shapeRoom(room, req.user._id));
 }));
 
+router.post('/:code/stop', asyncHandler(async (req, res) => {
+  const room = await PartyRoom.findOne({ code: req.params.code.toUpperCase() });
+  if (!room) return res.status(404).json({ message: 'Party room not found.' });
+  if (String(room.host) !== String(req.user._id)) {
+    return res.status(403).json({ message: 'Only the host can stop this party.' });
+  }
+  if (room.status !== 'open') {
+    return res.status(400).json({ message: 'This party is no longer open.' });
+  }
+  room.status = 'cancelled';
+  await room.save();
+  res.json({ message: 'Party stopped.' });
+}));
+
+router.delete('/:code', asyncHandler(async (req, res) => {
+  const room = await PartyRoom.findOne({ code: req.params.code.toUpperCase() });
+  if (!room) return res.status(404).json({ message: 'Party room not found.' });
+  if (String(room.host) !== String(req.user._id)) {
+    return res.status(403).json({ message: 'Only the host can delete this party.' });
+  }
+  if (room.status === 'ordered') {
+    return res.status(400).json({ message: 'This party has already been ordered and cannot be deleted.' });
+  }
+  await room.deleteOne();
+  res.json({ message: 'Party deleted.' });
+}));
+
 // Host places the order for the whole room and locks it.
 router.post('/:code/checkout', asyncHandler(async (req, res) => {
   const { orderType, paymentMethod } = req.body;

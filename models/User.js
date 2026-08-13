@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema({
   avatar: String,
   hostel: String,
   roomNumber: String,
+  isJunior: { type: Boolean, default: null },
   phone: String,
   isOnboarded: { type: Boolean, default: false },
   acceptedTerms: { type: Boolean, default: false },

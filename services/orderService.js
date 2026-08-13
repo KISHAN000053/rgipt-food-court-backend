@@ -55,6 +55,13 @@ async function placeOrder({ user, items, orderType, paymentMethod, specialInstru
 
   const type = orderType === 'takeaway' ? 'takeaway' : 'hostel';
 
+  // Seniors don't get hostel delivery at all — takeaway only. Legacy accounts from
+  // before isJunior existed (null/undefined, neither true nor false) are left alone
+  // rather than newly blocked.
+  if (type === 'hostel' && user.isJunior === false) {
+    return { ok: false, status: 400, message: 'Hostel delivery is only available for Juniors. Please choose Takeaway instead.' };
+  }
+
   if (type === 'hostel' && (!user.hostel || !user.roomNumber)) {
     return { ok: false, status: 400, message: 'Please set your hostel and room in your profile before ordering hostel delivery.' };
   }

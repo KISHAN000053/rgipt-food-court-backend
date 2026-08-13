@@ -27,12 +27,12 @@ router.get('/payouts', asyncHandler(async (req, res) => {
       }
     },
     { $lookup: { from: 'shops', localField: '_id', foreignField: '_id', as: 'shop' } },
-    { $unwind: '$shop' },
+    { $unwind: { path: '$shop', preserveNullAndEmptyArrays: true } },
     {
       $project: {
         _id: 0,
         shopId: '$_id',
-        shopName: '$shop.name',
+        shopName: { $ifNull: ['$shop.name', 'Deleted shop'] },
         amountOwed: { $round: ['$amountOwed', 2] },
         orderCount: { $size: '$orderIds' },
       }
@@ -131,6 +131,20 @@ router.delete('/shops/:id', asyncHandler(async (req, res) => {
   res.json({ message: 'Shop softly deleted' });
 }));
 
+router.delete('/shops/:id/permanent', asyncHandler(async (req, res) => {
+  const { confirmName } = req.body;
+  const shop = await Shop.findById(req.params.id);
+  if (!shop) return res.status(404).json({ message: 'Shop not found' });
+  if (confirmName !== shop.name) {
+    return res.status(400).json({ message: 'Shop name did not match — nothing was deleted.' });
+  }
+  await MenuItem.deleteMany({ shop: shop._id });
+  await Shop.findByIdAndDelete(shop._id);
+  const io = req.app.get('io');
+  if (io) io.emit('shopStatusChanged', { shopId: String(req.params.id), isOpen: false });
+  res.json({ message: `${shop.name} permanently deleted.` });
+}));
+
 router.get('/menu/:shopId', asyncHandler(async (req, res) => {
   const items = await MenuItem.find({ shop: req.params.shopId });
   res.json(items);
@@ -224,6 +238,10 @@ router.delete('/users/:id', asyncHandler(async (req, res) => {
   }
   if (target.role === 'admin') {
     return res.status(400).json({ message: 'Cannot delete an admin account' });
+  }
+  const ownsShop = await Shop.findOne({ ownerEmail: target.email.toLowerCase() });
+  if (ownsShop) {
+    return res.status(400).json({ message: `This account owns "${ownsShop.name}". Unassign it from the shop first, then delete.` });
   }
   await User.findByIdAndDelete(req.params.id);
   res.json({ message: 'User deleted' });
