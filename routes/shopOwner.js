@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const ExcelJS = require('exceljs');
 const Order = require('../models/Order');
 const MenuItem = require('../models/MenuItem');
 const { requireShopOwner } = require('../middleware/auth');
@@ -246,6 +247,172 @@ router.get('/stats', asyncHandler(async (req, res) => {
     orderCount: orders.length,
     revenue
   });
+}));
+
+// Downloadable payout statement (.xlsx) for a date range — an "Annexure" like the
+// ones Swiggy/Zomato provide, but honest about what our platform actually does:
+// no commission, no ads, no coupons, no GST computation. Includes both completed
+// AND cancelled orders in the period, since a shop owner should be able to see
+// exactly which orders were cancelled and why their payout is what it is — a
+// cancelled order legitimately pays ₹0 (the student was refunded), not an error.
+router.get('/report/annexure', asyncHandler(async (req, res) => {
+  const { from, to } = req.query;
+
+  const dateMatch = {};
+  if (from || to) {
+    dateMatch.createdAt = {};
+    if (from) dateMatch.createdAt.$gte = new Date(from);
+    if (to) {
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      dateMatch.createdAt.$lte = end;
+    }
+  }
+
+  const orders = await Order.find({
+    shop: req.shop._id,
+    ...CONFIRMED_PAYMENT_FILTER, // still excludes abandoned/unpaid checkouts — those never happened
+    ...dateMatch,
+  }).sort({ createdAt: 1 }).populate('user', 'name');
+
+  const delivered = orders.filter(o => o.status !== 'cancelled');
+  const cancelled = orders.filter(o => o.status === 'cancelled');
+
+  const deliveredTotal = Math.round(delivered.reduce((s, o) => s + o.subtotal, 0) * 100) / 100;
+  const refundedTotal = Math.round(cancelled.reduce((s, o) => s + (o.refundAmount ?? o.subtotal), 0) * 100) / 100;
+  const netPayout = deliveredTotal; // cancelled orders contribute ₹0 — matches the Payouts page exactly
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'RGIPT Food Court';
+  workbook.created = new Date();
+
+  const FONT = { name: 'Arial', size: 10 };
+  const HEADER_FONT = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+  const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEA5B26' } };
+  const CURRENCY_FMT = '₹#,##0.00;-₹#,##0.00;-';
+
+  // --- Sheet 1: Summary ---
+  const summary = workbook.addWorksheet('Summary');
+  summary.columns = [{ width: 4 }, { width: 32 }, { width: 24 }];
+  summary.getCell('B2').value = 'RGIPT Food Court — Payout Statement';
+  summary.getCell('B2').font = { name: 'Arial', size: 14, bold: true };
+  summary.getCell('B4').value = 'Shop Name';
+  summary.getCell('C4').value = req.shop.name;
+  summary.getCell('B5').value = 'Payout Period';
+  summary.getCell('C5').value = `${from || 'All time'} to ${to || 'today'}`;
+  summary.getCell('B6').value = 'Generated On';
+  summary.getCell('C6').value = new Date().toLocaleDateString('en-IN');
+  summary.getCell('B8').value = 'Delivered / Active Orders';
+  summary.getCell('C8').value = delivered.length;
+  summary.getCell('B9').value = 'Cancelled Orders';
+  summary.getCell('C9').value = cancelled.length;
+  summary.getCell('B10').value = 'Total Orders';
+  summary.getCell('C10').value = { formula: 'C8+C9', result: delivered.length + cancelled.length };
+  summary.getCell('B12').value = 'Total Payout';
+  summary.getCell('B12').font = { name: 'Arial', size: 12, bold: true };
+  summary.getCell('C12').value = { formula: "'Payout Breakup'!D6", result: netPayout };
+  summary.getCell('C12').font = { name: 'Arial', size: 12, bold: true };
+  summary.getCell('C12').numFmt = CURRENCY_FMT;
+  summary.getCell('B15').value = 'RGIPT Food Court charges no commission on your sales — you receive your full listed';
+  summary.getCell('B16').value = 'price for every completed order. Cancelled orders are refunded to the student in full';
+  summary.getCell('B17').value = '(food price only) and are not included in your payout.';
+  for (const row of [4, 5, 6, 8, 9, 10, 15, 16, 17]) {
+    summary.getRow(row).font = FONT;
+  }
+
+  // --- Sheet 2: Payout Breakup (simple — no commission/ads/tax deductions exist on this platform) ---
+  const breakup = workbook.addWorksheet('Payout Breakup');
+  breakup.columns = [{ width: 4 }, { width: 34 }, { width: 18 }, { width: 18 }, { width: 18 }];
+  breakup.getCell('B2').value = 'Payout Breakup';
+  breakup.getCell('B2').font = { name: 'Arial', size: 12, bold: true };
+  const breakupHeaderRow = breakup.getRow(4);
+  breakupHeaderRow.values = ['', 'Particulars', 'Delivered Orders', 'Cancelled Orders', 'Total'];
+  for (let c = 2; c <= 5; c++) {
+    const cell = breakupHeaderRow.getCell(c);
+    cell.font = HEADER_FONT;
+    cell.fill = HEADER_FILL;
+  }
+  breakup.getCell('B5').value = 'Orders';
+  breakup.getCell('C5').value = delivered.length;
+  breakup.getCell('D5').value = cancelled.length;
+  breakup.getCell('E5').value = { formula: 'C5+D5', result: delivered.length + cancelled.length };
+
+  breakup.getCell('B6').value = 'Item Sales Total';
+  breakup.getCell('C6').value = deliveredTotal;
+  breakup.getCell('D6').value = 0;
+  breakup.getCell('E6').value = { formula: 'C6+D6', result: deliveredTotal };
+
+  breakup.getCell('B7').value = 'Refunded to Student (cancelled orders)';
+  breakup.getCell('C7').value = 0;
+  breakup.getCell('D7').value = -refundedTotal;
+  breakup.getCell('E7').value = { formula: 'C7+D7', result: -refundedTotal };
+
+  breakup.getCell('B8').value = 'Total Payout to You';
+  breakup.getCell('B8').font = { name: 'Arial', size: 10, bold: true };
+  breakup.getCell('C8').value = { formula: 'C6+C7', result: deliveredTotal };
+  breakup.getCell('D8').value = { formula: 'D6+D7', result: 0 };
+  breakup.getCell('E8').value = { formula: 'C8+D8', result: netPayout };
+  for (const col of ['C8', 'D8', 'E8']) breakup.getCell(col).font = { name: 'Arial', size: 10, bold: true };
+  for (const col of ['C6', 'D6', 'E6', 'C7', 'D7', 'E7', 'C8', 'D8', 'E8']) {
+    breakup.getCell(col).numFmt = CURRENCY_FMT;
+  }
+  for (const row of [5, 6, 7, 8]) breakup.getRow(row).font = FONT;
+
+  // --- Sheet 3: Order Level ---
+  const orderSheet = workbook.addWorksheet('Order Level');
+  orderSheet.columns = [
+    { header: 'Order ID', key: 'orderId', width: 12 },
+    { header: 'Date', key: 'date', width: 14 },
+    { header: 'Customer', key: 'customer', width: 18 },
+    { header: 'Order Type', key: 'type', width: 12 },
+    { header: 'Items', key: 'items', width: 45 },
+    { header: 'Item Subtotal', key: 'subtotal', width: 14 },
+    { header: 'Status', key: 'status', width: 16 },
+    { header: 'Refunded to Student', key: 'refunded', width: 18 },
+    { header: 'Payout to You', key: 'payout', width: 14 },
+  ];
+  orderSheet.getRow(1).eachCell(cell => {
+    cell.font = HEADER_FONT;
+    cell.fill = HEADER_FILL;
+  });
+
+  const statusLabels = {
+    pending: 'Pending', accepted: 'Accepted', preparing: 'Preparing',
+    delivery_initiated: 'Completed', cancelled: 'Cancelled',
+  };
+
+  for (const o of orders) {
+    const isCancelled = o.status === 'cancelled';
+    orderSheet.addRow({
+      orderId: o._id.toString().slice(-6).toUpperCase(),
+      date: o.createdAt.toLocaleDateString('en-IN'),
+      customer: o.user?.name || '',
+      type: o.orderType === 'takeaway' ? 'Takeaway' : 'Hostel',
+      items: o.items.map(i => `${i.quantity}x ${i.name}${i.variantName ? ` (${i.variantName})` : ''}`).join('; '),
+      subtotal: o.subtotal,
+      status: statusLabels[o.status] || o.status,
+      refunded: isCancelled ? (o.refundAmount ?? o.subtotal) : 0,
+      payout: isCancelled ? 0 : o.subtotal,
+    }).font = FONT;
+  }
+
+  const totalRowNum = orders.length + 2;
+  const totalRow = orderSheet.getRow(totalRowNum);
+  totalRow.getCell('items').value = 'Total';
+  totalRow.getCell('subtotal').value = orders.length ? { formula: `SUM(F2:F${totalRowNum - 1})`, result: deliveredTotal + refundedTotal } : 0;
+  totalRow.getCell('refunded').value = orders.length ? { formula: `SUM(H2:H${totalRowNum - 1})`, result: refundedTotal } : 0;
+  totalRow.getCell('payout').value = orders.length ? { formula: `SUM(I2:I${totalRowNum - 1})`, result: netPayout } : 0;
+  totalRow.font = { name: 'Arial', size: 10, bold: true };
+
+  orderSheet.getColumn('subtotal').numFmt = CURRENCY_FMT;
+  orderSheet.getColumn('refunded').numFmt = CURRENCY_FMT;
+  orderSheet.getColumn('payout').numFmt = CURRENCY_FMT;
+
+  const filename = `payout-statement_${(from || 'all').replace(/-/g, '')}_to_${(to || 'today').replace(/-/g, '')}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  await workbook.xlsx.write(res);
+  res.end();
 }));
 
 // Order report for a date range. "earnings" = the shop's own subtotal (their prices),
