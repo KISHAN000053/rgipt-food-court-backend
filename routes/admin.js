@@ -17,12 +17,19 @@ router.use(requireAdmin);
 router.get('/payouts', asyncHandler(async (req, res) => {
   // Owed to each shop = their order subtotals (real prices they set). Platform revenue
   // is the separate processing fee (2%) + service fee, not a price difference.
+  //
+  // Since Route was connected, an order's subtotal can already be sitting in the
+  // shop's own account (routeTransferId set — paid automatically the moment the
+  // student paid) or still waiting on you to send manually (routeTransferId unset).
+  // Lumping these together would make an already-paid shop look like you still owe
+  // them — genuinely misleading now that some shops are linked and some aren't.
   const payouts = await Order.aggregate([
     { $match: { status: { $ne: 'cancelled' }, ...CONFIRMED_PAYMENT_FILTER } },
     {
       $group: {
         _id: '$shop',
-        amountOwed: { $sum: '$subtotal' },
+        autoPaidAmount: { $sum: { $cond: [{ $ifNull: ['$routeTransferId', false] }, '$subtotal', 0] } },
+        manualOwedAmount: { $sum: { $cond: [{ $ifNull: ['$routeTransferId', false] }, 0, '$subtotal'] } },
         orderIds: { $addToSet: '$_id' },
       }
     },
@@ -33,7 +40,9 @@ router.get('/payouts', asyncHandler(async (req, res) => {
         _id: 0,
         shopId: '$_id',
         shopName: { $ifNull: ['$shop.name', 'Deleted shop'] },
-        amountOwed: { $round: ['$amountOwed', 2] },
+        isLinked: { $ne: [{ $ifNull: ['$shop.razorpayLinkedAccountId', null] }, null] },
+        autoPaidAmount: { $round: ['$autoPaidAmount', 2] },
+        manualOwedAmount: { $round: ['$manualOwedAmount', 2] },
         orderCount: { $size: '$orderIds' },
       }
     },
@@ -54,7 +63,10 @@ router.get('/payouts', asyncHandler(async (req, res) => {
   res.json({
     payouts,
     summary: {
-      totalOwedToShops: Math.round(payouts.reduce((sum, p) => sum + p.amountOwed, 0) * 100) / 100,
+      // "Owed" now means only what genuinely still needs a manual transfer from you —
+      // amounts already auto-paid via Route are excluded, on purpose.
+      totalOwedToShops: Math.round(payouts.reduce((sum, p) => sum + p.manualOwedAmount, 0) * 100) / 100,
+      totalAutoPaidToShops: Math.round(payouts.reduce((sum, p) => sum + p.autoPaidAmount, 0) * 100) / 100,
       totalPlatformRevenue: Math.round((totalMarkupRevenue + totalServiceFees) * 100) / 100,
       totalMarkupRevenue,
       totalServiceFees,

@@ -282,6 +282,14 @@ router.get('/report/annexure', asyncHandler(async (req, res) => {
   const refundedTotal = Math.round(cancelled.reduce((s, o) => s + (o.refundAmount ?? o.subtotal), 0) * 100) / 100;
   const netPayout = deliveredTotal; // cancelled orders contribute ₹0 — matches the Payouts page exactly
 
+  // Split what's already landed in this shop's own account automatically (Route)
+  // from what still needs a manual transfer — a shop could have both if they were
+  // only linked to Route partway through the period being viewed.
+  const autoPaidOrders = delivered.filter(o => o.routeTransferId);
+  const manualOrders = delivered.filter(o => !o.routeTransferId);
+  const autoPaidTotal = Math.round(autoPaidOrders.reduce((s, o) => s + o.subtotal, 0) * 100) / 100;
+  const manualOwedTotal = Math.round(manualOrders.reduce((s, o) => s + o.subtotal, 0) * 100) / 100;
+
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'RGIPT Food Court';
   workbook.created = new Date();
@@ -313,10 +321,16 @@ router.get('/report/annexure', asyncHandler(async (req, res) => {
   summary.getCell('C12').value = { formula: "'Payout Breakup'!D6", result: netPayout };
   summary.getCell('C12').font = { name: 'Arial', size: 12, bold: true };
   summary.getCell('C12').numFmt = CURRENCY_FMT;
+  summary.getCell('B13').value = '  — Already received automatically';
+  summary.getCell('C13').value = autoPaidTotal;
+  summary.getCell('C13').numFmt = CURRENCY_FMT;
+  summary.getCell('B14').value = '  — Still owed (manual transfer)';
+  summary.getCell('C14').value = manualOwedTotal;
+  summary.getCell('C14').numFmt = CURRENCY_FMT;
   summary.getCell('B15').value = 'RGIPT Food Court charges no commission on your sales — you receive your full listed';
   summary.getCell('B16').value = 'price for every completed order. Cancelled orders are refunded to the student in full';
   summary.getCell('B17').value = '(food price only) and are not included in your payout.';
-  for (const row of [4, 5, 6, 8, 9, 10, 15, 16, 17]) {
+  for (const row of [4, 5, 6, 8, 9, 10, 13, 14, 15, 16, 17]) {
     summary.getRow(row).font = FONT;
   }
 
@@ -370,6 +384,7 @@ router.get('/report/annexure', asyncHandler(async (req, res) => {
     { header: 'Status', key: 'status', width: 16 },
     { header: 'Refunded to Student', key: 'refunded', width: 18 },
     { header: 'Payout to You', key: 'payout', width: 14 },
+    { header: 'Payment Received', key: 'paymentReceived', width: 22 },
   ];
   orderSheet.getRow(1).eachCell(cell => {
     cell.font = HEADER_FONT;
@@ -393,6 +408,7 @@ router.get('/report/annexure', asyncHandler(async (req, res) => {
       status: statusLabels[o.status] || o.status,
       refunded: isCancelled ? (o.refundAmount ?? o.subtotal) : 0,
       payout: isCancelled ? 0 : o.subtotal,
+      paymentReceived: isCancelled ? '—' : (o.routeTransferId ? 'Received automatically' : 'Still owed — manual transfer'),
     }).font = FONT;
   }
 
@@ -440,11 +456,17 @@ router.get('/report', asyncHandler(async (req, res) => {
     type: o.orderType === 'takeaway' ? 'Takeaway' : 'Hostel',
     items: o.items.map(i => `${i.quantity}x ${i.name}`).join('; '),
     earnings: Math.round(o.subtotal * 100) / 100,
+    // Whether this specific order already paid automatically (Route) or is still
+    // waiting on a manual transfer — a shop can have both if they were only linked
+    // partway through the period being viewed.
+    paidAutomatically: !!o.routeTransferId,
   }));
 
   const totalEarnings = Math.round(rows.reduce((sum, r) => sum + r.earnings, 0) * 100) / 100;
+  const totalAutoPaid = Math.round(rows.filter(r => r.paidAutomatically).reduce((sum, r) => sum + r.earnings, 0) * 100) / 100;
+  const totalManualOwed = Math.round((totalEarnings - totalAutoPaid) * 100) / 100;
 
-  res.json({ rows, totalEarnings, orderCount: rows.length });
+  res.json({ rows, totalEarnings, totalAutoPaid, totalManualOwed, orderCount: rows.length });
 }));
 
 module.exports = router;
