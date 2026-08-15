@@ -4,8 +4,8 @@ const Order = require('../models/Order');
 const PendingCheckout = require('../models/PendingCheckout');
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature } = require('../services/razorpayService');
-const { priceCart, createOrdersFromPricedCart } = require('../services/orderService');
+const { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, fetchOrderTransfers } = require('../services/razorpayService');
+const { priceCart, createOrdersFromPricedCart, getShopSubtotals } = require('../services/orderService');
 
 // Prices the cart and creates a Razorpay order in one step. Nothing is written to the
 // orders collection here — only a short-lived PendingCheckout record that expires on
@@ -19,9 +19,24 @@ router.post('/razorpay/create-order', requireAuth, asyncHandler(async (req, res)
     return res.status(priced.status).json({ message: priced.message });
   }
 
+  // Any shop in this cart with a Razorpay Route linked account configured gets
+  // its share transferred automatically the moment payment is captured. Shops
+  // without one configured are simply left out here — their share stays in the
+  // main account, exactly like every order has worked until now. This makes
+  // automatic splitting purely opt-in, per shop, with zero risk to shops that
+  // haven't been set up yet.
+  const shopSubtotals = getShopSubtotals(priced);
+  const transfers = [];
+  for (const shopId of priced.shopIds) {
+    const shop = priced.shopMap.get(shopId);
+    if (shop?.razorpayLinkedAccountId) {
+      transfers.push({ account: shop.razorpayLinkedAccountId, amountRupees: shopSubtotals.get(shopId) });
+    }
+  }
+
   let rpOrder;
   try {
-    rpOrder = await createRazorpayOrder({ amountRupees: priced.totalRupees, receipt: `chk-${req.user._id}-${Date.now()}` });
+    rpOrder = await createRazorpayOrder({ amountRupees: priced.totalRupees, receipt: `chk-${req.user._id}-${Date.now()}`, transfers });
   } catch (err) {
     console.error('[Razorpay create order failed]', {
       userId: req.user._id,
@@ -64,6 +79,28 @@ async function finalizeCheckout(razorpayOrderId, razorpayPaymentId, io) {
     return { failed: true, message: priced.message };
   }
 
+  // If any shop in this order had a Route transfer configured, find out which
+  // transfer_id actually corresponds to which shop, so each Order document can
+  // remember its own — required later for a correct, isolated refund reversal.
+  const transfersByShop = new Map();
+  const hasAnyLinkedShop = Array.from(priced.shopMap.values()).some(s => s.razorpayLinkedAccountId);
+  if (hasAnyLinkedShop) {
+    try {
+      const realTransfers = await fetchOrderTransfers(razorpayOrderId);
+      for (const shopId of priced.shopIds) {
+        const shop = priced.shopMap.get(shopId);
+        if (!shop?.razorpayLinkedAccountId) continue;
+        const found = realTransfers.find(t => t.account === shop.razorpayLinkedAccountId || t.recipient?.account === shop.razorpayLinkedAccountId);
+        if (found) transfersByShop.set(shopId, { id: found.id });
+      }
+    } catch (err) {
+      // Payment already succeeded — we don't fail the order over this, but a
+      // missing transfer_id here means that order can't have its transfer
+      // reversed automatically later if it's ever cancelled. Loud, not silent.
+      console.error('[Could not fetch Route transfers for order]', { razorpayOrderId, error: err?.message || err });
+    }
+  }
+
   const { groupId, orders } = await createOrdersFromPricedCart({
     user: { _id: pending.user },
     priced,
@@ -72,6 +109,7 @@ async function finalizeCheckout(razorpayOrderId, razorpayPaymentId, io) {
     razorpayPaymentId,
     specialInstructions: pending.specialInstructions,
     io,
+    transfersByShop,
   });
 
   await pending.deleteOne();

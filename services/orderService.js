@@ -104,6 +104,7 @@ async function priceCart({ user, items, orderType }) {
     type,
     byShop,
     shopIds,
+    shopMap, // shopId -> Shop doc — used to look up razorpayLinkedAccountId for Route transfers
     serviceFee: settings.serviceFee,
     processingFeeTotal,
     totalRupees,
@@ -125,7 +126,20 @@ async function priceCart({ user, items, orderType }) {
  * @param {Object} opts.io
  * @returns {Promise<{groupId, orders}>}
  */
-async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpayOrderId, razorpayPaymentId, specialInstructions, io }) {
+// Per-shop subtotal from an already-priced cart. Used to build Route transfer
+// instructions at checkout time (before payment) — kept as its own function so
+// this exact number is never computed two different ways in two different places.
+function getShopSubtotals(priced) {
+  const result = new Map();
+  for (const shopId of priced.shopIds) {
+    const lines = priced.byShop.get(shopId);
+    const subtotal = Math.round(lines.reduce((s, { price, quantity }) => s + price * quantity, 0) * 100) / 100;
+    result.set(shopId, subtotal);
+  }
+  return result;
+}
+
+async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpayOrderId, razorpayPaymentId, specialInstructions, io, transfersByShop }) {
   const { type, byShop, shopIds, serviceFee, processingFeeTotal } = priced;
   const groupId = 'GRP-' + crypto.randomBytes(6).toString('hex');
   const createdOrders = [];
@@ -155,6 +169,11 @@ async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpa
     const total = Math.round((subtotal + lineServiceFee + lineProcessingFee) * 100) / 100;
     const orderNumber = 'ORD-' + String(Date.now() % 1000000).padStart(6, '0') + '-' + i;
 
+    // If this shop's share was automatically transferred via Route, remember
+    // exactly which transfer — required later so a cancellation reverses only
+    // this specific transfer, never anything belonging to another shop.
+    const transfer = transfersByShop?.get(shopId);
+
     const order = await Order.create({
       orderNumber,
       groupId,
@@ -171,6 +190,8 @@ async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpa
       razorpayOrderId,
       razorpayPaymentId,
       specialInstructions,
+      routeTransferId: transfer?.id,
+      routeTransferAmount: transfer ? subtotal : undefined,
     });
 
     createdOrders.push(order);
@@ -194,7 +215,27 @@ async function refundOrderIfNeeded(order) {
   if (order.refundStatus === 'processing' || order.refundStatus === 'completed') return;
   if (!order.razorpayPaymentId || !order.subtotal || order.subtotal <= 0) return;
 
-  const { createRefund } = require('./razorpayService');
+  const { createRefund, reverseTransfer } = require('./razorpayService');
+
+  // If this order's share was auto-transferred to the shop via Route, that
+  // money must be pulled back FIRST — otherwise refunding the student would
+  // come out of the main account while the shop still holds their share,
+  // leaving the platform short by exactly that amount. This step can fail
+  // (most likely if the shop already withdrew/settled that money out) — if it
+  // does, we do NOT proceed to refund the student, and mark this loudly for
+  // manual follow-up rather than quietly creating a financial hole.
+  if (order.routeTransferId && !order.routeTransferReversed) {
+    try {
+      await reverseTransfer({ transferId: order.routeTransferId, amountRupees: order.routeTransferAmount || order.subtotal });
+      order.routeTransferReversed = true;
+      await order.save();
+    } catch (err) {
+      order.refundStatus = 'failed';
+      order.refundFailReason = `Could not reclaim funds from shop's account before refunding: ${err.message || 'reversal failed'}. This needs manual attention — the shop may already have withdrawn this amount.`;
+      await order.save();
+      return; // deliberately stop here — do not refund the student on an unreconciled order
+    }
+  }
 
   try {
     const refund = await createRefund({
@@ -213,4 +254,4 @@ async function refundOrderIfNeeded(order) {
   }
 }
 
-module.exports = { priceCart, createOrdersFromPricedCart, resolveLinePrice, refundOrderIfNeeded, ALLOWED_TRANSITIONS };
+module.exports = { priceCart, createOrdersFromPricedCart, getShopSubtotals, resolveLinePrice, refundOrderIfNeeded, ALLOWED_TRANSITIONS };

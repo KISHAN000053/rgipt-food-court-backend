@@ -35,6 +35,13 @@ const orderSchema = new mongoose.Schema({
   refundAmount: Number,
   refundedAt: Date,
   refundFailReason: String,
+  // Set only if this order's shop was linked to Route and its share was
+  // automatically transferred. Needed so cancelling THIS order reverses only
+  // THIS shop's transfer — never touches other shops' money from the same
+  // multi-shop checkout.
+  routeTransferId: String,
+  routeTransferAmount: Number,
+  routeTransferReversed: { type: Boolean, default: false },
   specialInstructions: String,
 }, { timestamps: true });
 

@@ -21,14 +21,54 @@ function getClient() {
 // Creates a Razorpay order for the given amount (in rupees). Amount is converted
 // to paise as Razorpay requires. receipt should be something you can trace back
 // to your own order group (we use the groupId).
-async function createRazorpayOrder({ amountRupees, receipt }) {
+//
+// transfers (optional): [{ account: 'acc_xxx', amountRupees: N }, ...] — one entry
+// per shop that has a Razorpay Route linked account configured. Any shop NOT
+// included here simply keeps its share in the main account, exactly like the
+// manual-payout flow that's been running until now — this makes automatic
+// splitting purely opt-in, per shop, with zero effect on unlinked shops.
+async function createRazorpayOrder({ amountRupees, receipt, transfers }) {
   const client = getClient();
-  const order = await client.orders.create({
+  const payload = {
     amount: Math.round(amountRupees * 100), // paise
     currency: 'INR',
     receipt,
-  });
+  };
+  if (transfers && transfers.length > 0) {
+    payload.transfers = transfers.map(t => ({
+      account: t.account,
+      amount: Math.round(t.amountRupees * 100),
+      on_hold: 0,
+    }));
+  }
+  const order = await client.orders.create(payload);
   return order; // { id, amount, currency, ... }
+}
+
+// After payment is captured, this is how we find out which transfer went to
+// which linked account — needed so each Order document can remember its own
+// transfer_id (required later if that specific order needs to be refunded).
+async function fetchOrderTransfers(razorpayOrderId) {
+  const client = getClient();
+  const result = await client.orders.fetchTransfers(razorpayOrderId);
+  return result.items || []; // [{ id, recipient_settlement_id, ... }] — id is what we need
+}
+
+// Pulls a shop's money back from their linked account into the main account —
+// the necessary first step before refunding a customer on an order that was
+// already auto-transferred. Without this, refunding the customer would come
+// straight out of the main account while the shop still has their share,
+// leaving the platform short by exactly that amount.
+//
+// This CAN fail — most commonly if the shop has already withdrawn/settled that
+// money out of their linked account balance. That failure must never be
+// swallowed silently (see refundOrderIfNeeded in orderService.js).
+async function reverseTransfer({ transferId, amountRupees }) {
+  const client = getClient();
+  const reversal = await client.transfers.reverse(transferId, {
+    amount: Math.round(amountRupees * 100),
+  });
+  return reversal; // { id, amount, ... }
 }
 
 // Verifies the signature Razorpay sends back after checkout. This confirms the
@@ -71,4 +111,4 @@ async function createRefund({ paymentId, amountRupees, notes }) {
   return refund; // { id, status, ... }
 }
 
-module.exports = { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, createRefund };
+module.exports = { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, createRefund, fetchOrderTransfers, reverseTransfer };
