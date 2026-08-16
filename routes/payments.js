@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Order = require('../models/Order');
+const User = require('../models/User');
 const PendingCheckout = require('../models/PendingCheckout');
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -69,7 +70,19 @@ async function finalizeCheckout(razorpayOrderId, razorpayPaymentId, io) {
   const pending = await PendingCheckout.findOne({ razorpayOrderId });
   if (!pending) return null; // already finalized by the other path, or never existed
 
-  const priced = await priceCart({ user: pending.user, items: pending.items, orderType: pending.orderType });
+  // pending.user is just an ObjectId reference — priceCart needs the real profile
+  // (hostel, room, isJunior, phone) to validate correctly. Passing the bare ID
+  // through here was silently breaking every hostel-delivery order: the missing
+  // .hostel/.roomNumber on a raw ObjectId made the hostel check fail every time,
+  // even for students who had those fields set correctly.
+  const user = await User.findById(pending.user);
+  if (!user) {
+    console.error('[Checkout finalize failed after payment]', { razorpayOrderId, reason: 'User not found' });
+    await pending.deleteOne();
+    return { failed: true, message: 'Your account could not be found.' };
+  }
+
+  const priced = await priceCart({ user, items: pending.items, orderType: pending.orderType });
   if (!priced.ok) {
     // Extremely unlikely (something changed between payment and finalization, e.g. a
     // shop closed mid-payment) — remove the pending record so it doesn't retry forever,
@@ -105,7 +118,7 @@ async function finalizeCheckout(razorpayOrderId, razorpayPaymentId, io) {
   }
 
   const { groupId, orders } = await createOrdersFromPricedCart({
-    user: { _id: pending.user },
+    user,
     priced,
     paymentMethod: 'razorpay',
     razorpayOrderId,
