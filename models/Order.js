@@ -22,9 +22,13 @@ const orderSchema = new mongoose.Schema({
   orderType: { type: String, enum: ['takeaway', 'hostel'], default: 'hostel' },
   status: { 
     type: String, 
-    enum: ['pending', 'accepted', 'preparing', 'delivery_initiated', 'cancelled'], 
+    enum: ['pending', 'accepted', 'preparing', 'delivery_initiated', 'completed', 'cancelled'], 
     default: 'pending' 
   },
+  // Only set for takeaway orders — a 4-digit code the student gives the shop at
+  // pickup, so "ready for pickup" and "actually collected" aren't the same thing.
+  // Not used for hostel delivery at all.
+  pickupPin: String,
   paymentMethod: { type: String, enum: ['cash', 'upi', 'razorpay'], default: 'razorpay' },
   paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' },
   razorpayOrderId: String,

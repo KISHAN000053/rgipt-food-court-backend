@@ -9,7 +9,7 @@ const Settings = require('../models/Settings');
 const Hostel = require('../models/Hostel');
 const { requireAdmin } = require('../middleware/auth');
 const { CONFIRMED_PAYMENT_FILTER } = require('../utils/orderFilters');
-const { refundOrderIfNeeded, ALLOWED_TRANSITIONS } = require('../services/orderService');
+const { refundOrderIfNeeded, validateStatusTransition } = require('../services/orderService');
 const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(requireAdmin);
@@ -327,22 +327,22 @@ router.delete('/hostels/:id', asyncHandler(async (req, res) => {
 }));
 
 router.get('/orders', asyncHandler(async (req, res) => {
-  const orders = await Order.find(CONFIRMED_PAYMENT_FILTER).sort({ createdAt: -1 }).populate('shop', 'name').populate('user', 'name email');
+  const orders = await Order.find(CONFIRMED_PAYMENT_FILTER).select('-pickupPin').sort({ createdAt: -1 }).populate('shop', 'name').populate('user', 'name email');
   res.json(orders);
 }));
 
 // Admin can update ANY order's status, regardless of which shop it belongs to —
 // separate from the shop-owner route since a shop owner can only touch their own.
 router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
-  const { status } = req.body;
+  const { status, pin } = req.body;
   const existing = await Order.findById(req.params.id);
   if (!existing) {
     return res.status(404).json({ message: 'Order not found' });
   }
 
-  const allowedNext = ALLOWED_TRANSITIONS[existing.status] || [];
-  if (!allowedNext.includes(status)) {
-    return res.status(400).json({ message: `Cannot move order from "${existing.status}" to "${status}"` });
+  const check = validateStatusTransition({ order: existing, newStatus: status, providedPin: pin });
+  if (!check.ok) {
+    return res.status(400).json({ message: check.message });
   }
 
   existing.status = status;
@@ -357,7 +357,9 @@ router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
     io.to(`user-${existing.user}`).emit('orderStatusChanged', existing);
   }
 
-  res.json(existing);
+  const responseOrder = existing.toObject();
+  delete responseOrder.pickupPin;
+  res.json(responseOrder);
 }));
 
 router.post('/announcements', asyncHandler(async (req, res) => {

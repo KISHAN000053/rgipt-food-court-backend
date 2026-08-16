@@ -4,17 +4,38 @@ const MenuItem = require('../models/MenuItem');
 const Shop = require('../models/Shop');
 const Settings = require('../models/Settings');
 
-// Simple, shop-friendly flow: pending -> accepted -> [preparing] -> delivery_initiated.
-// Preparing is optional — a shop can go straight from accepted to delivery_initiated.
-// Cancelled is allowed from any non-terminal state. Shared between the shop-owner and
-// admin order-status routes so the rules can never drift between them.
+// pending -> accepted -> [preparing] -> delivery_initiated -> completed.
+// delivery_initiated means "ready for pickup" (takeaway) or "out for delivery"
+// (hostel). completed means the food actually reached the student — for
+// takeaway this requires the pickup PIN; for hostel it doesn't, since there's
+// no equivalent "wrong person picked it up" risk. Cancelled is allowed from any
+// non-terminal state. Shared between the shop-owner and admin order-status
+// routes so the rules can never drift between them.
 const ALLOWED_TRANSITIONS = {
   pending: ['accepted', 'cancelled'],
   accepted: ['preparing', 'delivery_initiated', 'cancelled'],
   preparing: ['delivery_initiated', 'cancelled'],
-  delivery_initiated: [],
+  delivery_initiated: ['completed', 'cancelled'],
+  completed: [],
   cancelled: [],
 };
+
+// Checks both the normal state-machine rules AND, specifically for a takeaway
+// order being marked completed, that the correct pickup PIN was provided.
+// Centralized here so the shop-owner and admin status routes can never
+// silently drift into different rules for the same thing.
+function validateStatusTransition({ order, newStatus, providedPin }) {
+  const allowed = ALLOWED_TRANSITIONS[order.status] || [];
+  if (!allowed.includes(newStatus)) {
+    return { ok: false, message: `Cannot move an order from "${order.status}" to "${newStatus}".` };
+  }
+  if (newStatus === 'completed' && order.orderType === 'takeaway' && order.pickupPin) {
+    if (!providedPin || String(providedPin).trim() !== order.pickupPin) {
+      return { ok: false, message: 'Incorrect pickup PIN. Ask the student for their code before completing this order.' };
+    }
+  }
+  return { ok: true };
+}
 
 // Resolves the actual price + display name for a cart line against its menu item.
 // For a variant item, the student must have picked one of the item's options —
@@ -144,6 +165,14 @@ async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpa
   const groupId = 'GRP-' + crypto.randomBytes(6).toString('hex');
   const createdOrders = [];
 
+  // Last 4 digits of the student's own phone number — they already know this
+  // without needing to look anything up. Falls back to a timestamp-derived code
+  // only if a phone number is somehow missing or malformed (shouldn't happen —
+  // onboarding requires it — but checkout should never crash over this).
+  const pickupPin = type === 'takeaway'
+    ? (/^[0-9]{10}$/.test(user.phone || '') ? user.phone.slice(-4) : String(Date.now()).slice(-4))
+    : undefined;
+
   for (let i = 0; i < shopIds.length; i++) {
     const shopId = shopIds[i];
     const cartLines = byShop.get(shopId);
@@ -192,6 +221,7 @@ async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpa
       specialInstructions,
       routeTransferId: transfer?.id,
       routeTransferAmount: transfer ? subtotal : undefined,
+      pickupPin,
     });
 
     createdOrders.push(order);
@@ -254,4 +284,4 @@ async function refundOrderIfNeeded(order) {
   }
 }
 
-module.exports = { priceCart, createOrdersFromPricedCart, getShopSubtotals, resolveLinePrice, refundOrderIfNeeded, ALLOWED_TRANSITIONS };
+module.exports = { priceCart, createOrdersFromPricedCart, getShopSubtotals, resolveLinePrice, refundOrderIfNeeded, validateStatusTransition, ALLOWED_TRANSITIONS };

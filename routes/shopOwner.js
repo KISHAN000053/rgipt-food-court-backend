@@ -6,7 +6,7 @@ const MenuItem = require('../models/MenuItem');
 const { requireShopOwner } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { CONFIRMED_PAYMENT_FILTER } = require('../utils/orderFilters');
-const { refundOrderIfNeeded, ALLOWED_TRANSITIONS } = require('../services/orderService');
+const { refundOrderIfNeeded, validateStatusTransition } = require('../services/orderService');
 
 router.use(requireShopOwner);
 
@@ -45,7 +45,7 @@ router.get('/orders', asyncHandler(async (req, res) => {
     shop: req.shop._id,
     createdAt: { $gte: startOfDay },
     ...CONFIRMED_PAYMENT_FILTER,
-  }).sort({ createdAt: -1 }).populate('user', 'name phone roomNumber hostel');
+  }).select('-pickupPin').sort({ createdAt: -1 }).populate('user', 'name phone roomNumber hostel');
   
   res.json(orders);
 }));
@@ -55,21 +55,21 @@ router.get('/orders/pending', asyncHandler(async (req, res) => {
     shop: req.shop._id,
     status: { $in: ['pending', 'accepted', 'preparing'] },
     ...CONFIRMED_PAYMENT_FILTER,
-  }).sort({ createdAt: 1 }).populate('user', 'name phone roomNumber hostel');
+  }).select('-pickupPin').sort({ createdAt: 1 }).populate('user', 'name phone roomNumber hostel');
   
   res.json(orders);
 }));
 
 router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
-  const { status } = req.body;
+  const { status, pin } = req.body;
   const existing = await Order.findOne({ _id: req.params.id, shop: req.shop._id });
   if (!existing) {
     return res.status(404).json({ message: 'Order not found' });
   }
 
-  const allowedNext = ALLOWED_TRANSITIONS[existing.status] || [];
-  if (!allowedNext.includes(status)) {
-    return res.status(400).json({ message: `Cannot move order from "${existing.status}" to "${status}"` });
+  const check = validateStatusTransition({ order: existing, newStatus: status, providedPin: pin });
+  if (!check.ok) {
+    return res.status(400).json({ message: check.message });
   }
 
   existing.status = status;
@@ -87,7 +87,9 @@ router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
     io.to(`user-${existing.user}`).emit('orderStatusChanged', existing);
   }
   
-  res.json(existing);
+  const responseOrder = existing.toObject();
+  delete responseOrder.pickupPin;
+  res.json(responseOrder);
 }));
 
 router.get('/menu', asyncHandler(async (req, res) => {
