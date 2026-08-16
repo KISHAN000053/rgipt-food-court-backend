@@ -38,6 +38,7 @@ async function createRazorpayOrder({ amountRupees, receipt, transfers }) {
     payload.transfers = transfers.map(t => ({
       account: t.account,
       amount: Math.round(t.amountRupees * 100),
+      currency: 'INR', // required on EACH transfer entry — the order's own currency field doesn't cover this
       on_hold: 0,
     }));
   }
