@@ -15,14 +15,10 @@ const asyncHandler = require('../middleware/asyncHandler');
 router.use(requireAdmin);
 
 router.get('/payouts', asyncHandler(async (req, res) => {
-  // Owed to each shop = their order subtotals (real prices they set). Platform revenue
-  // is the separate processing fee (2%) + service fee, not a price difference.
-  //
-  // Since Route was connected, an order's subtotal can already be sitting in the
-  // shop's own account (routeTransferId set — paid automatically the moment the
-  // student paid) or still waiting on you to send manually (routeTransferId unset).
-  // Lumping these together would make an already-paid shop look like you still owe
-  // them — genuinely misleading now that some shops are linked and some aren't.
+  // Per-shop performance — order count and revenue, plus whether each shop is
+  // linked to Route. "Owed" only matters for a shop that ISN'T linked yet; once
+  // every shop is linked, this number naturally settles at ₹0 for all of them,
+  // which is correct, not broken.
   const payouts = await Order.aggregate([
     { $match: { status: { $ne: 'cancelled' }, ...CONFIRMED_PAYMENT_FILTER } },
     {
@@ -60,8 +56,34 @@ router.get('/payouts', asyncHandler(async (req, res) => {
   const totalServiceFees = Math.round((feeAgg[0]?.totalServiceFees || 0) * 100) / 100;
   const totalMarkupRevenue = Math.round((feeAgg[0]?.totalProcessingFees || 0) * 100) / 100;
 
+  // Anomalies — a paid, non-cancelled order whose shop IS linked to Route, but
+  // which somehow never got a routeTransferId recorded. This is exactly the
+  // shape of bug that was silently missing transfer records a few days ago —
+  // this section exists so a repeat of that gets caught here automatically,
+  // rather than only being found by accident when a cancellation goes wrong.
+  const linkedShopIds = (await Shop.find({ razorpayLinkedAccountId: { $ne: null } }, '_id')).map(s => s._id);
+  const anomalies = await Order.find({
+    shop: { $in: linkedShopIds },
+    status: { $ne: 'cancelled' },
+    paymentStatus: 'paid',
+    routeTransferId: { $in: [null, undefined] },
+  }).populate('shop', 'name').sort({ createdAt: -1 }).limit(50);
+
+  // Refunds that failed to reverse the shop's share automatically — these need
+  // you to sort out manually, same as before, just surfaced here directly
+  // instead of only showing up buried in individual order detail pages.
+  const failedRefunds = await Order.find({ refundStatus: 'failed' })
+    .populate('shop', 'name').populate('user', 'name email').sort({ createdAt: -1 }).limit(50);
+
   res.json({
     payouts,
+    anomalies: anomalies.map(o => ({
+      orderId: o._id, shopName: o.shop?.name || 'Unknown', total: o.total, createdAt: o.createdAt,
+    })),
+    failedRefunds: failedRefunds.map(o => ({
+      orderId: o._id, shopName: o.shop?.name || 'Unknown', customerEmail: o.user?.email || '',
+      refundAmount: o.refundAmount, reason: o.refundFailReason, createdAt: o.createdAt,
+    })),
     summary: {
       // "Owed" now means only what genuinely still needs a manual transfer from you —
       // amounts already auto-paid via Route are excluded, on purpose.
