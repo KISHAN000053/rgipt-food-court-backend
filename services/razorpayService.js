@@ -49,10 +49,15 @@ async function createRazorpayOrder({ amountRupees, receipt, transfers }) {
 // After payment is captured, this is how we find out which transfer went to
 // which linked account — needed so each Order document can remember its own
 // transfer_id (required later if that specific order needs to be refunded).
+//
+// Uses the documented expand parameter rather than an unverified convenience
+// method, since this is the shape confirmed directly in Razorpay's own examples:
+// the order response gets a nested transfers.items array, and each transfer's
+// destination account is in a field called "recipient" (a plain string).
 async function fetchOrderTransfers(razorpayOrderId) {
   const client = getClient();
-  const result = await client.orders.fetchTransfers(razorpayOrderId);
-  return result.items || []; // [{ id, recipient_settlement_id, ... }] — id is what we need
+  const order = await client.orders.fetch(razorpayOrderId, { expand: ['transfers'] });
+  return order.transfers?.items || [];
 }
 
 // Pulls a shop's money back from their linked account into the main account —

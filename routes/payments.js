@@ -90,7 +90,10 @@ async function finalizeCheckout(razorpayOrderId, razorpayPaymentId, io) {
       for (const shopId of priced.shopIds) {
         const shop = priced.shopMap.get(shopId);
         if (!shop?.razorpayLinkedAccountId) continue;
-        const found = realTransfers.find(t => t.account === shop.razorpayLinkedAccountId || t.recipient?.account === shop.razorpayLinkedAccountId);
+        // 'recipient' is the field Razorpay actually returns — confirmed directly
+        // against their own documented example response. It's a plain string:
+        // the linked account ID itself, not a nested object.
+        const found = realTransfers.find(t => t.recipient === shop.razorpayLinkedAccountId);
         if (found) transfersByShop.set(shopId, { id: found.id });
       }
     } catch (err) {
