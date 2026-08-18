@@ -51,4 +51,17 @@ router.patch('/profile', requireAuth, asyncHandler(async (req, res) => {
   res.json(user);
 }));
 
+// A dedicated, minimal acceptance route — used by shop owners (and admins, if
+// ever needed) who don't go through student onboarding at all, and so would
+// otherwise never be asked to accept anything. Deliberately doesn't touch
+// phone/hostel/isJunior — those are student-only concepts.
+router.patch('/accept-terms', requireAuth, asyncHandler(async (req, res) => {
+  const user = await User.findByIdAndUpdate(
+    req.user._id,
+    { acceptedTerms: true, acceptedTermsAt: new Date() },
+    { new: true }
+  );
+  res.json(user);
+}));
+
 module.exports = router;

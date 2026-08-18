@@ -26,12 +26,35 @@ router.patch('/shop/status', asyncHandler(async (req, res) => {
   if (req.shop.isPermanentlyClosed) {
     return res.status(400).json({ message: 'This shop has been deactivated by an admin and cannot be reopened here.' });
   }
-  const { isOpen } = req.body;
+  const { isOpen, force } = req.body;
+  const io = req.app.get('io');
+
+  // Going offline while orders are still in progress (not yet ready for
+  // pickup/delivery) needs a deliberate confirmation — the student already
+  // paid, and simply vanishing offline shouldn't leave them with no food and
+  // no refund. First call warns; a second call with force:true proceeds and
+  // auto-cancels (with automatic refund) anything still in progress.
+  if (isOpen === false) {
+    const activeOrders = await Order.find({ shop: req.shop._id, status: { $in: ['pending', 'accepted', 'preparing'] } });
+    if (activeOrders.length > 0 && !force) {
+      return res.json({ needsConfirmation: true, activeOrderCount: activeOrders.length });
+    }
+    for (const order of activeOrders) {
+      order.status = 'cancelled';
+      await order.save();
+      await refundOrderIfNeeded(order);
+      if (io) io.to(`user-${order.user}`).emit('orderStatusChanged', order);
+    }
+    req.shop.isOpen = false;
+    await req.shop.save();
+    if (io) io.emit('shopStatusChanged', { shopId: String(req.shop._id), isOpen: false, name: req.shop.name });
+    return res.json({ _id: req.shop._id, name: req.shop.name, isOpen: false, cancelledOrderCount: activeOrders.length });
+  }
+
   req.shop.isOpen = !!isOpen;
   await req.shop.save();
 
   // Same live-update mechanism admin uses — students see it instantly.
-  const io = req.app.get('io');
   if (io) io.emit('shopStatusChanged', { shopId: String(req.shop._id), isOpen: req.shop.isOpen, name: req.shop.name });
 
   res.json({ _id: req.shop._id, name: req.shop.name, isOpen: req.shop.isOpen });

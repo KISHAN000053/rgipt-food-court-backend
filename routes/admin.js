@@ -159,10 +159,21 @@ router.patch('/shops/:id', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/shops/:id', asyncHandler(async (req, res) => {
-  await Shop.findByIdAndUpdate(req.params.id, { isPermanentlyClosed: true, isOpen: false });
   const io = req.app.get('io');
+
+  // Same safety net as the shop-owner's own offline toggle: deactivating a shop
+  // shouldn't silently strand paid, in-progress orders with no refund.
+  const activeOrders = await Order.find({ shop: req.params.id, status: { $in: ['pending', 'accepted', 'preparing'] } });
+  for (const order of activeOrders) {
+    order.status = 'cancelled';
+    await order.save();
+    await refundOrderIfNeeded(order);
+    if (io) io.to(`user-${order.user}`).emit('orderStatusChanged', order);
+  }
+
+  await Shop.findByIdAndUpdate(req.params.id, { isPermanentlyClosed: true, isOpen: false });
   if (io) io.emit('shopStatusChanged', { shopId: String(req.params.id), isOpen: false });
-  res.json({ message: 'Shop softly deleted' });
+  res.json({ message: 'Shop deactivated', cancelledOrderCount: activeOrders.length });
 }));
 
 router.delete('/shops/:id/permanent', asyncHandler(async (req, res) => {
