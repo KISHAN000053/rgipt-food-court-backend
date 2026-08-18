@@ -9,7 +9,7 @@ const Settings = require('../models/Settings');
 const Hostel = require('../models/Hostel');
 const { requireAdmin } = require('../middleware/auth');
 const { CONFIRMED_PAYMENT_FILTER } = require('../utils/orderFilters');
-const { refundOrderIfNeeded, validateStatusTransition } = require('../services/orderService');
+const { refundOrderIfNeeded, validateStatusTransition, notifyOrderStatusChange } = require('../services/orderService');
 const asyncHandler = require('../middleware/asyncHandler');
 
 router.use(requireAdmin);
@@ -168,7 +168,7 @@ router.delete('/shops/:id', asyncHandler(async (req, res) => {
     order.status = 'cancelled';
     await order.save();
     await refundOrderIfNeeded(order);
-    if (io) io.to(`user-${order.user}`).emit('orderStatusChanged', order);
+    notifyOrderStatusChange(io, order);
   }
 
   await Shop.findByIdAndUpdate(req.params.id, { isPermanentlyClosed: true, isOpen: false });
@@ -364,9 +364,7 @@ router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
   }
 
   const io = req.app.get('io');
-  if (io) {
-    io.to(`user-${existing.user}`).emit('orderStatusChanged', existing);
-  }
+  notifyOrderStatusChange(io, existing);
 
   const responseOrder = existing.toObject();
   delete responseOrder.pickupPin;

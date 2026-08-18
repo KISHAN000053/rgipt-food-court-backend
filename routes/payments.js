@@ -225,6 +225,17 @@ router.post('/razorpay/webhook', asyncHandler(async (req, res) => {
 
       const io = req.app.get('io');
       if (io) io.to(`user-${order.user}`).emit('orderStatusChanged', order);
+
+      if (event.event === 'refund.processed') {
+        const { notifyUser } = require('../services/pushService');
+        notifyUser(order.user, {
+          title: 'RGIPT Food Court',
+          body: `Your refund of ₹${order.refundAmount} has been processed.`,
+          orderId: String(order._id),
+          url: `/orders/${order._id}`,
+          tag: `refund-${order._id}`,
+        }).catch(err => console.error('[Push notification error on refund]', err?.message || err));
+      }
     }
   }
 

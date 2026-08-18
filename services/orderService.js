@@ -243,6 +243,7 @@ async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpa
         title: `New order — ₹${order.total}`,
         body: itemSummary + more,
         orderId: String(order._id),
+        url: '/shop-owner',
         tag: `new-order-${order._id}`, // prevents duplicate notifications for same order
         requireInteraction: true,      // keeps notification visible until dismissed
       });
@@ -304,4 +305,42 @@ async function refundOrderIfNeeded(order) {
   }
 }
 
-module.exports = { priceCart, createOrdersFromPricedCart, getShopSubtotals, resolveLinePrice, refundOrderIfNeeded, validateStatusTransition, ALLOWED_TRANSITIONS };
+// Human-readable status messages for the student's push notification. Kept
+// separate from the shop-facing labels in the frontend since the tone here
+// is written directly to the student, not a status badge.
+const STUDENT_STATUS_MESSAGES = {
+  accepted: 'Your order has been accepted!',
+  preparing: 'Your order is being prepared.',
+  delivery_initiated: (orderType) => orderType === 'takeaway' ? 'Your order is ready for pickup!' : 'Your order is out for delivery!',
+  completed: (orderType) => orderType === 'takeaway' ? 'Order picked up. Enjoy!' : 'Order delivered. Enjoy!',
+  cancelled: 'Your order was cancelled. If it was paid, a refund is on its way.',
+};
+
+// Single place that notifies a student their order changed — both the live
+// in-app update (socket, for anyone with the app open right now) and a real
+// push notification (works even if they've closed the app). Called from
+// every route that changes an order's status, so the two can never drift
+// out of sync with each other. NOT async on purpose — the push notification
+// fires in the background, so a status-change response never waits on a
+// network round-trip to a push service.
+function notifyOrderStatusChange(io, order) {
+  if (io) {
+    io.to(`user-${order.user}`).emit('orderStatusChanged', order);
+  }
+  const rawMessage = STUDENT_STATUS_MESSAGES[order.status];
+  const body = typeof rawMessage === 'function' ? rawMessage(order.orderType) : rawMessage;
+  if (!body) return; // no notification for statuses not in the map (e.g. 'pending')
+
+  const { notifyUser } = require('./pushService');
+  notifyUser(order.user, {
+    title: 'RGIPT Food Court',
+    body,
+    orderId: String(order._id),
+    url: `/orders/${order._id}`,
+    tag: `order-${order._id}`, // replaces any earlier notification for the same order, doesn't pile up
+  }).catch(err => {
+    console.error('[Push notification error on order status change]', err?.message || err);
+  });
+}
+
+module.exports = { priceCart, createOrdersFromPricedCart, getShopSubtotals, resolveLinePrice, refundOrderIfNeeded, validateStatusTransition, notifyOrderStatusChange, ALLOWED_TRANSITIONS };

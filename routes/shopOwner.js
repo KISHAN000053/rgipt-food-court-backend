@@ -6,7 +6,7 @@ const MenuItem = require('../models/MenuItem');
 const { requireShopOwner } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { CONFIRMED_PAYMENT_FILTER } = require('../utils/orderFilters');
-const { refundOrderIfNeeded, validateStatusTransition } = require('../services/orderService');
+const { refundOrderIfNeeded, validateStatusTransition, notifyOrderStatusChange } = require('../services/orderService');
 
 router.use(requireShopOwner);
 
@@ -43,7 +43,7 @@ router.patch('/shop/status', asyncHandler(async (req, res) => {
       order.status = 'cancelled';
       await order.save();
       await refundOrderIfNeeded(order);
-      if (io) io.to(`user-${order.user}`).emit('orderStatusChanged', order);
+      notifyOrderStatusChange(io, order);
     }
     req.shop.isOpen = false;
     await req.shop.save();
@@ -106,9 +106,7 @@ router.patch('/orders/:id/status', asyncHandler(async (req, res) => {
   }
   
   const io = req.app.get('io');
-  if (io) {
-    io.to(`user-${existing.user}`).emit('orderStatusChanged', existing);
-  }
+  notifyOrderStatusChange(io, existing);
   
   const responseOrder = existing.toObject();
   delete responseOrder.pickupPin;
