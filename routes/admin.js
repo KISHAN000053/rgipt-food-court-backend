@@ -123,7 +123,7 @@ router.get('/shops', asyncHandler(async (req, res) => {
   res.json(shops);
 }));
 
-const SHOP_FIELDS = ['name', 'description', 'isOpen', 'isPermanentlyClosed', 'menuEditingEnabled', 'ownerEmail', 'categories', 'razorpayLinkedAccountId'];
+const SHOP_FIELDS = ['name', 'description', 'isOpen', 'isPermanentlyClosed', 'menuEditPolicy', 'ownerEmail', 'categories', 'razorpayLinkedAccountId'];
 
 const buildShopPayload = async (body) => {
   const payload = {};

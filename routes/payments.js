@@ -5,7 +5,7 @@ const User = require('../models/User');
 const PendingCheckout = require('../models/PendingCheckout');
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, fetchOrderTransfers } = require('../services/razorpayService');
+const { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, fetchOrderTransfers, reverseTransfer, createRefund, fetchPayment } = require('../services/razorpayService');
 const { priceCart, createOrdersFromPricedCart, getShopSubtotals } = require('../services/orderService');
 
 // Prices the cart and creates a Razorpay order in one step. Nothing is written to the
@@ -84,12 +84,38 @@ async function finalizeCheckout(razorpayOrderId, razorpayPaymentId, io) {
 
   const priced = await priceCart({ user, items: pending.items, orderType: pending.orderType });
   if (!priced.ok) {
-    // Extremely unlikely (something changed between payment and finalization, e.g. a
-    // shop closed mid-payment) — remove the pending record so it doesn't retry forever,
-    // and surface this clearly rather than silently losing a paid transaction.
-    console.error('[Checkout finalize failed after payment]', { razorpayOrderId, reason: priced.message });
-    await pending.deleteOne();
-    return { failed: true, message: priced.message };
+    // Payment already succeeded — money is sitting captured with no order to show
+    // for it (most likely cause: a shop in the cart went offline while the student
+    // was mid-payment in their UPI app). The only acceptable outcome here is a full
+    // refund. Never leave a captured payment with no order and no refund.
+    console.error('[Checkout finalize failed after payment — issuing full refund]', { razorpayOrderId, reason: priced.message });
+    try {
+      // If any linked shop's transfer already fired (Route transfers execute the
+      // instant payment is captured, before this code even runs), pull it back
+      // first — otherwise the refund would come out of the main account while a
+      // shop that never even got a real order keeps their share.
+      const existingTransfers = await fetchOrderTransfers(razorpayOrderId).catch(() => []);
+      for (const t of existingTransfers) {
+        await reverseTransfer({ transferId: t.id, amountRupees: t.amount / 100 }).catch(err =>
+          console.error('[Could not reverse stray transfer during failed-finalization refund]', t.id, err?.message)
+        );
+      }
+
+      const payment = await fetchPayment(razorpayPaymentId);
+      await createRefund({
+        paymentId: razorpayPaymentId,
+        amountRupees: payment.amount / 100,
+        notes: { reason: 'Order could not be created after payment — full refund', razorpayOrderId },
+      });
+      await pending.deleteOne();
+      return { failed: true, message: `${priced.message} Your payment has been fully refunded — it should reflect within a few days.` };
+    } catch (refundErr) {
+      // The one truly serious case: payment captured, order impossible, AND the
+      // automatic refund itself failed. This must never disappear silently.
+      console.error('[CRITICAL: could not auto-refund a failed finalization]', { razorpayOrderId, razorpayPaymentId, error: refundErr?.message || refundErr });
+      await pending.deleteOne();
+      return { failed: true, message: `${priced.message} We could not process your refund automatically — please contact Support with this reference: ${razorpayOrderId}` };
+    }
   }
 
   // If any shop in this order had a Route transfer configured, find out which

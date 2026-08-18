@@ -117,4 +117,15 @@ async function createRefund({ paymentId, amountRupees, notes }) {
   return refund; // { id, status, ... }
 }
 
-module.exports = { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, createRefund, fetchOrderTransfers, reverseTransfer };
+// Fetches a payment's real captured amount directly from Razorpay. Used when
+// something goes wrong AFTER payment succeeds but BEFORE any order could be
+// created (e.g. a shop went offline mid-payment) — at that point our own
+// pricing calculation can no longer be trusted, so we ask Razorpay what was
+// actually charged rather than guess.
+async function fetchPayment(paymentId) {
+  const client = getClient();
+  const payment = await client.payments.fetch(paymentId);
+  return payment; // { id, amount (paise), status, ... }
+}
+
+module.exports = { createRazorpayOrder, verifyPaymentSignature, verifyWebhookSignature, createRefund, fetchOrderTransfers, reverseTransfer, fetchPayment };

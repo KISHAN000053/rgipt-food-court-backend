@@ -17,7 +17,7 @@ router.get('/shop', asyncHandler(async (req, res) => {
     name: req.shop.name,
     isOpen: req.shop.isOpen,
     isPermanentlyClosed: req.shop.isPermanentlyClosed,
-    menuEditingEnabled: req.shop.menuEditingEnabled,
+    menuEditPolicy: req.shop.menuEditPolicy,
   });
 }));
 
@@ -99,21 +99,41 @@ router.get('/menu', asyncHandler(async (req, res) => {
 
 const MENU_FIELDS = ['name', 'price', 'hasVariants', 'variants', 'category', 'description', 'isVeg', 'isAvailable', 'isEnabled', 'isAddon'];
 
-// Shop owners may only change prices between 4:00 and 14:00 (IST). Everything else
-// about an item (availability, name, category) can be edited any time.
-// Admins are exempt so you can always correct a price.
-const PRICE_WINDOW_START = 4;   // 4 AM
-const PRICE_WINDOW_END = 14;    // 2 PM
+// The 'default' policy's allowed window: 3:30 AM to 2:30 PM, IST — and only
+// while the shop is offline. Admins are always exempt so you can always
+// correct something regardless of any shop's policy.
+const WINDOW_START_MINUTES = 3 * 60 + 30;  // 3:30 AM
+const WINDOW_END_MINUTES = 14 * 60 + 30;   // 2:30 PM
 
-const isWithinPriceWindow = () => {
+const isWithinEditWindow = () => {
   // Server runs in UTC on Render; convert to IST (UTC+5:30) for the campus-local window.
-  const nowUtcMs = Date.now();
-  const istMs = nowUtcMs + (5 * 60 + 30) * 60 * 1000;
-  const istHour = new Date(istMs).getUTCHours();
-  return istHour >= PRICE_WINDOW_START && istHour < PRICE_WINDOW_END;
+  const istMs = Date.now() + (5 * 60 + 30) * 60 * 1000;
+  const d = new Date(istMs);
+  const minutesSinceMidnight = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return minutesSinceMidnight >= WINDOW_START_MINUTES && minutesSinceMidnight < WINDOW_END_MINUTES;
 };
 
-const priceWindowMessage = 'Prices can only be changed between 4:00 AM and 2:00 PM. You can still update availability and other details.';
+// Single source of truth for whether menu STRUCTURE (name, price, category,
+// new/deleted items) can be changed right now. Availability toggling (in/out
+// of stock) is deliberately never gated by this — see the isAvailable-only
+// carve-out below, kept from the original design since that's real-time
+// operations, not menu editing.
+function checkMenuEditAllowed(shop) {
+  if (shop.menuEditPolicy === 'restricted') {
+    return { allowed: false, message: 'Menu editing has been restricted by admin for your shop. Contact admin for changes.' };
+  }
+  if (shop.menuEditPolicy === 'unrestricted') {
+    return { allowed: true };
+  }
+  // 'default' (or any legacy/unset value)
+  if (shop.isOpen) {
+    return { allowed: false, message: 'Menu can only be edited while your shop is offline.' };
+  }
+  if (!isWithinEditWindow()) {
+    return { allowed: false, message: 'Menu can only be edited between 3:30 AM and 2:30 PM, while your shop is offline.' };
+  }
+  return { allowed: true };
+}
 
 function validateMenuPricing(payload) {
   if (payload.hasVariants) {
@@ -131,21 +151,6 @@ function validateMenuPricing(payload) {
   return null;
 }
 
-// Compares an existing item's pricing against an incoming payload — used to decide
-// whether the 4am-2pm window applies. Works whether the item is single-price or
-// switching between single/variant, or editing variant prices.
-function hasPriceChanged(existing, payload) {
-  const willHaveVariants = payload.hasVariants !== undefined ? payload.hasVariants : existing.hasVariants;
-  if (willHaveVariants) {
-    const newVariants = payload.variants !== undefined ? payload.variants : existing.variants;
-    const oldVariants = existing.variants || [];
-    if (newVariants.length !== oldVariants.length) return true;
-    return newVariants.some((v, idx) => Number(v.price) !== Number(oldVariants[idx]?.price));
-  }
-  if (payload.price === undefined) return false;
-  return Number(existing.price) !== Number(payload.price);
-}
-
 const buildMenuPayload = (body) => {
   const payload = {};
   for (const field of MENU_FIELDS) {
@@ -160,8 +165,9 @@ const buildMenuPayload = (body) => {
 };
 
 router.post('/menu', asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin' && !req.shop.menuEditingEnabled) {
-    return res.status(403).json({ message: 'Menu editing has been restricted by admin for your shop. Contact admin to add items.' });
+  if (req.user.role !== 'admin') {
+    const check = checkMenuEditAllowed(req.shop);
+    if (!check.allowed) return res.status(403).json({ message: check.message });
   }
   const payload = buildMenuPayload(req.body);
   if (!payload.name) {
@@ -175,17 +181,15 @@ router.post('/menu', asyncHandler(async (req, res) => {
   }
   const pricingError = validateMenuPricing(payload);
   if (pricingError) return res.status(400).json({ message: pricingError });
-  if (req.user.role !== 'admin' && !isWithinPriceWindow()) {
-    return res.status(403).json({ message: 'New items can only be added between 4:00 AM and 2:00 PM.' });
-  }
   if (payload.hasVariants) payload.price = 0;
   const item = await MenuItem.create({ ...payload, shop: req.shop._id });
   res.status(201).json(item);
 }));
 
 router.delete('/menu/:itemId', asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin' && !req.shop.menuEditingEnabled) {
-    return res.status(403).json({ message: 'Menu editing has been restricted by admin for your shop. Contact admin to remove items.' });
+  if (req.user.role !== 'admin') {
+    const check = checkMenuEditAllowed(req.shop);
+    if (!check.allowed) return res.status(403).json({ message: check.message });
   }
   const item = await MenuItem.findOneAndDelete({ _id: req.params.itemId, shop: req.shop._id });
   if (!item) {
@@ -197,27 +201,19 @@ router.delete('/menu/:itemId', asyncHandler(async (req, res) => {
 router.patch('/menu/:itemId', asyncHandler(async (req, res) => {
   const payload = buildMenuPayload(req.body);
 
-  if (req.user.role !== 'admin' && !req.shop.menuEditingEnabled) {
-    // Even when restricted, a shop owner can still mark something in/out of stock —
-    // that's day-to-day operations, not "editing the menu". Anything beyond that
-    // (name, category, price, variants, description) is blocked.
+  if (req.user.role !== 'admin') {
+    // Marking something in/out of stock is never blocked, regardless of policy —
+    // that's real-time operations, not "editing the menu". Anything beyond that
+    // (name, category, price, variants, description) goes through the full check.
     const onlyTouchesAvailability = Object.keys(payload).every(k => k === 'isAvailable');
     if (!onlyTouchesAvailability) {
-      return res.status(403).json({ message: 'Menu editing has been restricted by admin for your shop. You can still mark items in or out of stock. Contact admin for other changes.' });
+      const check = checkMenuEditAllowed(req.shop);
+      if (!check.allowed) return res.status(403).json({ message: check.message });
     }
   }
 
   const pricingError = validateMenuPricing(payload);
   if (pricingError) return res.status(400).json({ message: pricingError });
-
-  const existing = await MenuItem.findOne({ _id: req.params.itemId, shop: req.shop._id });
-  if (!existing) {
-    return res.status(404).json({ message: 'Menu item not found' });
-  }
-
-  if (req.user.role !== 'admin' && hasPriceChanged(existing, payload) && !isWithinPriceWindow()) {
-    return res.status(403).json({ message: priceWindowMessage });
-  }
 
   const item = await MenuItem.findOneAndUpdate(
     { _id: req.params.itemId, shop: req.shop._id },
