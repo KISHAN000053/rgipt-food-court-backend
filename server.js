@@ -64,6 +64,7 @@ app.use('/api/hostels', require('./routes/hostels'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/payments', require('./routes/payments'));
+app.use('/api/push', require('./routes/push'));
 app.use('/api/owner', require('./routes/shopOwner'));
 app.use('/api/admin', require('./routes/admin'));
 

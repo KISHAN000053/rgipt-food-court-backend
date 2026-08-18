@@ -229,7 +229,28 @@ async function createOrdersFromPricedCart({ user, priced, paymentMethod, razorpa
     if (io) {
       io.to(`shop-${shopId}`).emit('newOrder', order);
     }
-  }
+
+    // Push notification to the shop owner — fires in background even when the
+    // app isn't the active tab. Does NOT throw on failure so a push problem
+    // can never block the order from being created.
+    try {
+      const shop = await Shop.findById(shopId).select('ownerId');
+      if (shop?.ownerId) {
+        const { notifyUser } = require('./pushService');
+        const itemSummary = order.items.slice(0, 2).map(i => `${i.quantity}x ${i.name}`).join(', ');
+        const more = order.items.length > 2 ? ` +${order.items.length - 2} more` : '';
+        await notifyUser(shop.ownerId, {
+          title: `New order — ₹${order.total}`,
+          body: itemSummary + more,
+          orderId: String(order._id),
+          tag: `new-order-${order._id}`, // prevents duplicate notifications for same order
+          requireInteraction: true,      // keeps notification visible until dismissed
+        });
+      }
+    } catch (err) {
+      console.error('[Push notification error on new order]', err?.message || err);
+    }
+  } // end of for loop over shopIds
 
   return { groupId, orders: createdOrders };
 }
