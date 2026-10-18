@@ -159,7 +159,7 @@ if (isProduction) {
   }
 }
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/rgipt-food-court')
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/campus-food-court')
   .then(() => {
     console.log('Connected to MongoDB');
     server.listen(PORT, () => {
