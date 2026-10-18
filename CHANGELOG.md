@@ -2,6 +2,7 @@
 
 ## 2026-10-18
 
+- Added full-history Gitleaks secret scanning to GitHub Actions and expanded ignore rules for environment files, package-manager credentials, private keys, local databases, and backups.
 - Made allowed campus email domains configurable with `ALLOWED_EMAIL_DOMAINS`, preserving the RGIPT default for existing deployments.
 - Restricted CORS to configured trusted frontend origins and authenticated Socket.IO connections; private user/shop room joins now require authorization.
 - Added basic browser security headers, production configuration checks, and safer production error responses.
