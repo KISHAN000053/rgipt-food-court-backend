@@ -333,7 +333,7 @@ function notifyOrderStatusChange(io, order) {
 
   const { notifyUser } = require('./pushService');
   notifyUser(order.user, {
-    title: 'RGIPT Food Court',
+    title: process.env.CAMPUS_NAME || 'Campus Food Court',
     body,
     orderId: String(order._id),
     url: `/orders/${order._id}`,
