@@ -9,12 +9,28 @@ const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 
+const getAdminEmails = () => (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
+  .split(',')
+  .map(email => email.trim().toLowerCase())
+  .filter(Boolean);
+
+const getAllowedEmailDomains = () => {
+  const configured = process.env.ALLOWED_EMAIL_DOMAINS;
+  // Preserve existing RGIPT behavior until a deployment explicitly configures its domain(s).
+  const domains = (configured || 'rgipt.ac.in')
+    .split(',')
+    .map(domain => domain.trim().toLowerCase().replace(/^@/, ''))
+    .filter(Boolean);
+  return domains;
+};
+
 const isAllowedEmail = async (email) => {
-  const lower = email.toLowerCase();
-  if (lower.endsWith('@rgipt.ac.in')) return true;
-  const adminEmails = (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
-    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-  if (adminEmails.includes(lower)) return true;
+  const lower = String(email || '').trim().toLowerCase();
+  const domain = lower.split('@').pop();
+  const allowedDomains = getAllowedEmailDomains();
+  if (lower.includes('@') && allowedDomains.includes(domain)) return true;
+
+  if (getAdminEmails().includes(lower)) return true;
   const ownsShop = await Shop.findOne({ ownerEmail: lower });
   return !!ownsShop;
 };
@@ -26,35 +42,29 @@ passport.use(new GoogleStrategy({
   },
   async (accessToken, refreshToken, profile, done) => {
     try {
-      const email = profile.emails[0].value;
-      const allowed = await isAllowedEmail(email);
-      if (!allowed) {
-        return done(null, false, { message: 'Only @rgipt.ac.in emails can sign in.' });
+      const email = profile.emails?.[0]?.value;
+      if (!email) {
+        return done(null, false, { message: 'Google did not return an email address for this account.' });
       }
 
+      const allowed = await isAllowedEmail(email);
+      if (!allowed) {
+        return done(null, false, { message: 'This email is not allowed to sign in to this campus food court.' });
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
       let user = await User.findOne({ googleId: profile.id });
       if (!user) {
-        let role = 'student';
-        const adminEmails = (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
-          .split(',')
-          .map(e => e.trim().toLowerCase())
-          .filter(Boolean);
-        if (adminEmails.includes(email.toLowerCase())) {
-          role = 'admin';
-        }
+        const role = getAdminEmails().includes(normalizedEmail) ? 'admin' : 'student';
         user = await User.create({
           googleId: profile.id,
           name: profile.displayName,
-          email,
-          avatar: profile.photos[0]?.value,
+          email: normalizedEmail,
+          avatar: profile.photos?.[0]?.value,
           role
         });
       } else {
-        const adminEmails = (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || '')
-          .split(',')
-          .map(e => e.trim().toLowerCase())
-          .filter(Boolean);
-        const shouldBeAdmin = adminEmails.includes(user.email.toLowerCase());
+        const shouldBeAdmin = getAdminEmails().includes(user.email.toLowerCase());
         if (shouldBeAdmin && user.role !== 'admin') {
           user.role = 'admin';
           await user.save();
@@ -79,7 +89,14 @@ router.get('/google/callback', (req, res, next) => {
     next();
   })(req, res, next);
 }, asyncHandler(async (req, res) => {
-  const token = jwt.sign({ id: req.user._id }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET must be configured before issuing authentication tokens.');
+  }
+  if (!process.env.FRONTEND_URL) {
+    throw new Error('FRONTEND_URL must be configured before completing authentication.');
+  }
+
+  const token = jwt.sign({ id: req.user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
   res.cookie('token', token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -95,7 +112,6 @@ router.get('/google/callback', (req, res, next) => {
   if (ownsShop) {
     return res.redirect(`${process.env.FRONTEND_URL}/shop-owner#token=${token}`);
   }
-  // Regular students complete their profile first.
   if (!req.user.isOnboarded) {
     return res.redirect(`${process.env.FRONTEND_URL}/onboarding#token=${token}`);
   }
