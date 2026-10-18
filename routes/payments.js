@@ -14,6 +14,10 @@ const { priceCart, createOrdersFromPricedCart, getShopSubtotals } = require('../
 // payment is confirmed, in finalizeCheckout() below.
 router.post('/razorpay/create-order', requireAuth, asyncHandler(async (req, res) => {
   const { items, orderType, specialInstructions } = req.body;
+  if (specialInstructions != null && (typeof specialInstructions !== 'string' || specialInstructions.length > 500)) {
+    return res.status(400).json({ message: 'Special instructions must be text of 500 characters or fewer.' });
+  }
+  const normalizedInstructions = typeof specialInstructions === 'string' ? specialInstructions.trim() : '';
 
   const priced = await priceCart({ user: req.user, items, orderType });
   if (!priced.ok) {
@@ -52,7 +56,7 @@ router.post('/razorpay/create-order', requireAuth, asyncHandler(async (req, res)
     razorpayOrderId: rpOrder.id,
     items,
     orderType,
-    specialInstructions,
+    specialInstructions: normalizedInstructions,
   });
 
   res.json({
