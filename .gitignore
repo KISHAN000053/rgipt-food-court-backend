@@ -1,15 +1,47 @@
 # Dependencies
 node_modules/
 
-# Environment — NEVER commit
-.env
-.env.local
-.env.production
+# Environment files: keep only the safe template
+.env*
+!.env.example
 
-# Logs
+# Package-manager credentials
+.npmrc
+!.npmrc.example
+
+# Build output and test coverage
+dist/
+build/
+coverage/
+
+# Logs and runtime artifacts
 *.log
 npm-debug.log*
+pids/
+*.pid
+*.seed
 
-# OS
+# Private keys, certificates, and signing material
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+
+# Local databases, dumps, and backups
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bson
+*.bak
+*.backup
+
+# OS and editor files
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
