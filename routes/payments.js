@@ -168,6 +168,18 @@ router.post('/razorpay/verify', requireAuth, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Missing payment verification fields' });
   }
 
+  // Never let one signed-in user finalize or query another user's checkout by
+  // supplying a Razorpay order ID. The webhook has its own verified server path.
+  const pending = await PendingCheckout.findOne({
+    razorpayOrderId,
+    user: req.user._id,
+  });
+  if (!pending) {
+    const existing = await Order.findOne({ razorpayOrderId, user: req.user._id });
+    if (existing) return res.json({ message: 'Payment confirmed', groupId: existing.groupId });
+    return res.status(404).json({ message: 'Checkout not found' });
+  }
+
   const valid = verifyPaymentSignature({ razorpayOrderId, razorpayPaymentId, razorpaySignature });
   if (!valid) {
     return res.status(400).json({ message: 'Payment verification failed.' });
@@ -179,10 +191,10 @@ router.post('/razorpay/verify', requireAuth, asyncHandler(async (req, res) => {
     return res.status(409).json({ message: result.message });
   }
   if (!result) {
-    // Already finalized (likely the webhook beat us to it) — confirm using the real order.
-    const existing = await Order.findOne({ razorpayOrderId });
+    // A webhook may have finalized the same user's checkout while this request was in flight.
+    const existing = await Order.findOne({ razorpayOrderId, user: req.user._id });
     if (existing) return res.json({ message: 'Payment confirmed', groupId: existing.groupId });
-    return res.status(404).json({ message: 'Order not found' });
+    return res.status(404).json({ message: 'Checkout not found' });
   }
 
   res.json({ message: 'Payment confirmed', groupId: result.groupId });
@@ -229,7 +241,7 @@ router.post('/razorpay/webhook', asyncHandler(async (req, res) => {
       if (event.event === 'refund.processed') {
         const { notifyUser } = require('../services/pushService');
         notifyUser(order.user, {
-          title: 'RGIPT Food Court',
+          title: process.env.CAMPUS_NAME || 'Campus Food Court',
           body: `Your refund of ₹${order.refundAmount} has been processed.`,
           orderId: String(order._id),
           url: `/orders/${order._id}`,
