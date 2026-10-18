@@ -4,7 +4,7 @@ A Node.js/Express API for a campus food-ordering platform, with MongoDB persiste
 
 **Frontend:** https://github.com/KISHAN000053/rgipt-food-court-frontend
 
-> **Important:** This codebase is currently configured around RGIPT (including the `@rgipt.ac.in` sign-in rule). Treat it as a starting point for another campus, not as a zero-configuration multi-tenant product. Review the customization and security sections before production use.
+> **Important:** This codebase currently defaults to the RGIPT email domain for sign-in. Configure `ALLOWED_EMAIL_DOMAINS` for another campus. It is a starting point for campus-specific deployments, not a zero-configuration multi-tenant product.
 
 ## Stack
 
@@ -52,11 +52,9 @@ The only seed script currently exposed in `package.json` is:
 npm run seed
 ```
 
-**Warning:** inspect `scripts/seed.js` and the models before running it against any database; seeding can create or change records. Do not run seed scripts against production data without a backup and understanding their behavior.
+**Warning:** inspect the seed script and models before running against any database; seeding can create or change records. Do not run seed scripts against production data without a backup and understanding their behavior.
 
 ## Environment variables
-
-The repository's `.env.example` documents these variables:
 
 | Variable | Purpose |
 |---|---|
@@ -67,10 +65,11 @@ The repository's `.env.example` documents these variables:
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
 | `GOOGLE_CALLBACK_URL` | Exact OAuth callback URL registered with Google |
 | `FRONTEND_URL` | Frontend origin used for CORS and redirects |
+| `ALLOWED_EMAIL_DOMAINS` | Comma-separated allowed domains, without `@`; defaults to `rgipt.ac.in` |
 | `ADMIN_EMAILS` | Comma-separated admin email addresses |
 | `NODE_ENV` | Set to `production` for production cookie behavior |
 
-Payment and push-notification routes may require additional provider-specific variables. Inspect the relevant route/service files and configure those values in your hosting provider's secret manager; never paste real secrets into README files or commit them to Git.
+Payment and push-notification routes may require additional provider-specific variables. Inspect the relevant route/service files and configure those values in your hosting provider's secret manager; never put real secrets in README files or commit them to Git.
 
 ## API overview
 
@@ -99,29 +98,30 @@ Additional admin, payment, hostel, settings, push, and owner endpoints are mount
 4. Set all environment variables in the host dashboard.
 5. Configure the Google OAuth callback URL exactly as deployed.
 6. Set `FRONTEND_URL` to the deployed frontend origin.
-7. Confirm MongoDB network access permits the host and is not open to everyone unnecessarily.
-8. Verify `GET /api/health`, Google sign-in, order flow, payment verification/webhooks, and Socket.IO behavior before accepting real orders.
+7. Set `ALLOWED_EMAIL_DOMAINS` to the campus domain(s) you actually permit.
+8. Confirm MongoDB network access permits the host and is not unnecessarily open to everyone.
+9. Verify the health endpoint, Google sign-in, order flow, payment verification/webhooks, and Socket.IO behavior before accepting real orders.
 
 ## Reuse for another campus
 
 This repository is **not yet campus-agnostic by configuration alone**. Before using it for another institution:
-1. Replace the hard-coded `@rgipt.ac.in` email-domain rule in `routes/auth.js` with a validated, configurable allowlist.
+1. Set `ALLOWED_EMAIL_DOMAINS` to the intended campus email domain(s), separated by commas.
 2. Review all campus names, hostel/room assumptions, seed data, and campus-specific scripts.
 3. Configure the OAuth consent screen, callback URL, frontend origin, and administrator accounts.
-4. Review all role checks, ownership checks, request validation, rate limits, and payment-webhook verification.
+4. Review role checks, ownership checks, request validation, rate limits, and payment-webhook verification.
 5. Test student, shop-owner, and admin permissions with separate accounts.
-6. If you intend to host multiple colleges from one deployment, design and enforce tenant isolation in the database and every relevant query first. Merely changing the branding does not create safe multi-tenancy.
+6. If hosting multiple colleges from one deployment, design and enforce tenant isolation in the database and every relevant query first. Merely changing branding or allowing several email domains does not create safe multi-tenancy.
 
 ## Security checklist
 
-- Do not use fallback JWT secrets such as `secret`; fail startup when production secrets are missing.
+- Never use a fallback JWT secret such as `secret`; set a strong unique `JWT_SECRET` in every environment.
 - Never deploy with placeholder OAuth credentials or commit real credentials.
 - Rotate credentials that have been exposed. Removing a value from the latest file does not remove it from Git history.
 - Keep `.env` files out of Git; store production secrets in the host's environment settings.
-- Restrict CORS to trusted origins and verify authentication/authorization on every protected backend route.
+- Restrict CORS to trusted origins and verify authorization on every protected backend route.
 - Validate webhook signatures and never trust payment success reported by the client.
 - Back up the database before migrations or seed operations.
 
 ## License and commercial use
 
-Check the repository's root license file before copying, modifying, or selling this software. Third-party libraries, payment providers, Google OAuth, and any images/fonts/assets have their own terms. This README does not certify that the application is production-ready or compliant with a particular campus's policies.
+This repository includes an MIT license, which permits commercial use, modification, and redistribution subject to its terms. Third-party libraries, payment providers, Google OAuth, and any images/fonts/assets have their own terms. The license does not certify production readiness or compliance with a campus's policies.
