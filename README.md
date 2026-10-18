@@ -99,16 +99,17 @@ Payment and push-notification routes may require additional provider-specific va
 | GET | `/api/auth/google` | Start Google sign-in |
 | GET | `/api/auth/me` | Current authenticated user |
 | POST | `/api/auth/logout` | Clear the auth cookie |
-| PATCH | `/api/users/profile` | Update profile details |
+| PATCH | `/api/users/profile` | Update the current user's profile |
 | GET | `/api/shops` | List shops |
-| GET | `/api/shops/:id/menu` | Get a shop menu |
-| GET | `/api/menu/search?q=` | Search menu items |
-| POST | `/api/orders` | Place an order |
+| GET | `/api/menu/shops/:id/menu` | Get a shop menu |
+| GET | `/api/menu/shops/:id/addons` | Get shop add-ons |
 | GET | `/api/orders/my` | Get the current user's orders |
+| POST | `/api/payments/razorpay/create-order` | Validate cart and create payment attempt |
+| POST | `/api/payments/razorpay/verify` | Verify payment and finalize checkout |
 | GET | `/api/owner/orders` | Shop-owner order view |
 | PATCH | `/api/owner/orders/:id/status` | Update order status |
 
-Additional admin, payment, hostel, settings, push, and owner endpoints are mounted in `server.js`; review their route files for the full contract.
+The complete endpoint map, access requirements, and Socket.IO event details are in [docs/API.md](docs/API.md).
 
 ## Deployment (Render or similar Node host)
 
