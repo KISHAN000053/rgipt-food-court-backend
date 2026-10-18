@@ -1,48 +1,127 @@
-# RGIPT Food Court — Backend
+# Campus Food Court — Backend
 
-Express.js REST API + Socket.io for the RGIPT campus food ordering platform.
+A Node.js/Express API for a campus food-ordering platform, with MongoDB persistence, Google OAuth, role-based dashboards, Razorpay payment integration, push notifications, and Socket.IO updates.
 
-## Tech Stack
-- Node.js + Express.js
-- MongoDB Atlas + Mongoose
-- Google OAuth 2.0 (passport-google-oauth20)
-- JWT authentication (httpOnly cookies)
-- Socket.io (real-time order tracking)
+**Frontend:** https://github.com/KISHAN000053/rgipt-food-court-frontend
 
-## Setup
+> **Important:** This codebase is currently configured around RGIPT (including the `@rgipt.ac.in` sign-in rule). Treat it as a starting point for another campus, not as a zero-configuration multi-tenant product. Review the customization and security sections before production use.
+
+## Stack
+
+- Node.js + Express
+- MongoDB + Mongoose
+- Google OAuth 2.0 via Passport
+- JWT authentication in an HTTP-only cookie
+- Socket.IO
+- Razorpay
+- web-push
+
+## Requirements
+
+- A supported Node.js LTS release and npm
+- MongoDB connection string
+- Google OAuth credentials and a configured callback URL
+- Frontend URL for CORS and OAuth redirects
+- Razorpay credentials if online payments are enabled
+- VAPID keys if web push notifications are enabled
+
+## Local setup
 
 ```bash
-cp .env.example .env
-# Fill in all values in .env
 npm install
-npm run seed    # Populate MongoDB with shops + menu items
-npm run dev     # Development server on port 5000
-npm start       # Production
+cp .env.example .env
 ```
 
-## Environment Variables
+Fill in `.env` with local development values before starting the server. Then run:
 
-See `.env.example` for all required variables.
+```bash
+npm run dev
+```
 
-## API Routes
+The server defaults to port `5000`. Health check: `GET /api/health`.
 
-| Method | Route | Description |
+For a production-style run:
+
+```bash
+npm start
+```
+
+The only seed script currently exposed in `package.json` is:
+
+```bash
+npm run seed
+```
+
+**Warning:** inspect `scripts/seed.js` and the models before running it against any database; seeding can create or change records. Do not run seed scripts against production data without a backup and understanding their behavior.
+
+## Environment variables
+
+The repository's `.env.example` documents these variables:
+
+| Variable | Purpose |
+|---|---|
+| `PORT` | HTTP server port; defaults to `5000` |
+| `MONGODB_URI` | MongoDB connection string |
+| `JWT_SECRET` | Strong, unique secret used to sign session tokens |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `GOOGLE_CALLBACK_URL` | Exact OAuth callback URL registered with Google |
+| `FRONTEND_URL` | Frontend origin used for CORS and redirects |
+| `ADMIN_EMAILS` | Comma-separated admin email addresses |
+| `NODE_ENV` | Set to `production` for production cookie behavior |
+
+Payment and push-notification routes may require additional provider-specific variables. Inspect the relevant route/service files and configure those values in your hosting provider's secret manager; never paste real secrets into README files or commit them to Git.
+
+## API overview
+
+| Method | Route | Purpose |
 |---|---|---|
-| GET | `/api/auth/google` | Initiate Google login |
-| GET | `/api/auth/me` | Current user |
-| POST | `/api/auth/logout` | Logout |
-| PATCH | `/api/users/profile` | Update hostel/room/phone |
-| GET | `/api/shops` | List open shops |
-| GET | `/api/shops/:id/menu` | Shop menu |
-| GET | `/api/menu/search?q=` | Cross-shop search |
-| POST | `/api/orders` | Place order |
-| GET | `/api/orders/my` | My orders |
-| GET | `/api/owner/orders` | Shop owner orders |
+| GET | `/api/health` | Health check |
+| GET | `/api/auth/google` | Start Google sign-in |
+| GET | `/api/auth/me` | Current authenticated user |
+| POST | `/api/auth/logout` | Clear the auth cookie |
+| PATCH | `/api/users/profile` | Update profile details |
+| GET | `/api/shops` | List shops |
+| GET | `/api/shops/:id/menu` | Get a shop menu |
+| GET | `/api/menu/search?q=` | Search menu items |
+| POST | `/api/orders` | Place an order |
+| GET | `/api/orders/my` | Get the current user's orders |
+| GET | `/api/owner/orders` | Shop-owner order view |
 | PATCH | `/api/owner/orders/:id/status` | Update order status |
 
-## Deployment (Render)
+Additional admin, payment, hostel, settings, push, and owner endpoints are mounted in `server.js`; review their route files for the full contract.
 
-1. Connect this repo to Render
-2. Build command: `npm install`
-3. Start command: `node server.js`
-4. Add all environment variables in Render dashboard
+## Deployment (Render or similar Node host)
+
+1. Create a Node.js web service connected to this repository.
+2. Build/install command: `npm install`.
+3. Start command: `npm start`.
+4. Set all environment variables in the host dashboard.
+5. Configure the Google OAuth callback URL exactly as deployed.
+6. Set `FRONTEND_URL` to the deployed frontend origin.
+7. Confirm MongoDB network access permits the host and is not open to everyone unnecessarily.
+8. Verify `GET /api/health`, Google sign-in, order flow, payment verification/webhooks, and Socket.IO behavior before accepting real orders.
+
+## Reuse for another campus
+
+This repository is **not yet campus-agnostic by configuration alone**. Before using it for another institution:
+1. Replace the hard-coded `@rgipt.ac.in` email-domain rule in `routes/auth.js` with a validated, configurable allowlist.
+2. Review all campus names, hostel/room assumptions, seed data, and campus-specific scripts.
+3. Configure the OAuth consent screen, callback URL, frontend origin, and administrator accounts.
+4. Review all role checks, ownership checks, request validation, rate limits, and payment-webhook verification.
+5. Test student, shop-owner, and admin permissions with separate accounts.
+6. If you intend to host multiple colleges from one deployment, design and enforce tenant isolation in the database and every relevant query first. Merely changing the branding does not create safe multi-tenancy.
+
+## Security checklist
+
+- Do not use fallback JWT secrets such as `secret`; fail startup when production secrets are missing.
+- Never deploy with placeholder OAuth credentials or commit real credentials.
+- Rotate credentials that have been exposed. Removing a value from the latest file does not remove it from Git history.
+- Keep `.env` files out of Git; store production secrets in the host's environment settings.
+- Restrict CORS to trusted origins and verify authentication/authorization on every protected backend route.
+- Validate webhook signatures and never trust payment success reported by the client.
+- Back up the database before migrations or seed operations.
+
+## License and commercial use
+
+Check the repository's root license file before copying, modifying, or selling this software. Third-party libraries, payment providers, Google OAuth, and any images/fonts/assets have their own terms. This README does not certify that the application is production-ready or compliant with a particular campus's policies.
