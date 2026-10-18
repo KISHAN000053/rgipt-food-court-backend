@@ -87,7 +87,10 @@ function verifyPaymentSignature({ razorpayOrderId, razorpayPaymentId, razorpaySi
     .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
     .update(`${razorpayOrderId}|${razorpayPaymentId}`)
     .digest('hex');
-  return expected === razorpaySignature;
+  if (typeof razorpaySignature !== 'string' || !/^[a-f0-9]{64}$/i.test(razorpaySignature)) return false;
+  const expectedBytes = Buffer.from(expected, 'hex');
+  const suppliedBytes = Buffer.from(razorpaySignature, 'hex');
+  return expectedBytes.length === suppliedBytes.length && crypto.timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
 // Verifies a webhook payload's signature using the separate webhook secret
@@ -102,7 +105,10 @@ function verifyWebhookSignature({ rawBody, signature }) {
     .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET)
     .update(rawBody)
     .digest('hex');
-  return expected === signature;
+  if (typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature)) return false;
+  const expectedBytes = Buffer.from(expected, 'hex');
+  const suppliedBytes = Buffer.from(signature, 'hex');
+  return expectedBytes.length === suppliedBytes.length && crypto.timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
 // Refunds part of a captured payment (used when a paid order is cancelled — we
