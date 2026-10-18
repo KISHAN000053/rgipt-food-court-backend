@@ -1,5 +1,5 @@
 {
-  "name": "campus-food-court-backend",
+  "name": "rgipt-food-court-backend",
   "version": "1.0.0",
   "description": "Backend API for a campus food ordering platform",
   "main": "server.js",
