@@ -14,6 +14,7 @@ const errorHandler = require('./middleware/errorHandler');
 const compression = require('compression');
 
 const app = express();
+app.disable('x-powered-by');
 const server = http.createServer(app);
 
 // Support one or several trusted frontend origins without using wildcard CORS
@@ -94,6 +95,16 @@ io.on('connection', (socket) => {
   });
 });
 
+// Basic browser security headers. A full Content-Security-Policy should be added only
+// after auditing every external script/style source used by the deployed frontend.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
 // Middleware
 app.use(cors(corsOptions));
 app.use(compression());
@@ -128,14 +139,22 @@ const PORT = process.env.PORT || 5000;
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (isProduction) {
-  const required = ['MONGODB_URI', 'JWT_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'FRONTEND_URL'];
+  const required = ['MONGODB_URI', 'JWT_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL', 'FRONTEND_URL'];
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length) {
     console.error(`Missing required production environment variables: ${missing.join(', ')}`);
     process.exit(1);
   }
-  if (process.env.JWT_SECRET === 'secret' || process.env.JWT_SECRET.length < 32) {
+  if (process.env.JWT_SECRET.length < 32 || /replace-with|generate-a-long|your-secret|^secret$/i.test(process.env.JWT_SECRET)) {
     console.error('JWT_SECRET must be a unique random secret of at least 32 characters in production.');
+    process.exit(1);
+  }
+  if (/your-|mock|placeholder/i.test(process.env.GOOGLE_CLIENT_ID) || /your-|mock|placeholder/i.test(process.env.GOOGLE_CLIENT_SECRET)) {
+    console.error('Replace placeholder Google OAuth credentials before production deployment.');
+    process.exit(1);
+  }
+  if (/^mongodb:\/\/(localhost|127\\.0\\.0\\.1)(:|\/|$)/i.test(process.env.MONGODB_URI)) {
+    console.error('MONGODB_URI must point to a reachable production database, not localhost.');
     process.exit(1);
   }
 }
