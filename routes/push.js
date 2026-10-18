@@ -7,6 +7,9 @@ const asyncHandler = require('../middleware/asyncHandler');
 // The client needs the VAPID public key to create its subscription.
 // This endpoint is public — no auth needed, it's not sensitive.
 router.get('/vapid-public-key', (req, res) => {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    return res.status(503).json({ message: 'Push notifications are not configured on this server.' });
+  }
   res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
 });
 
