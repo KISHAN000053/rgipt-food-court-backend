@@ -16,7 +16,7 @@
     "passport-google-oauth20": "^2.0.0",
     "web-push": "^3.6.7",
     "razorpay": "^2.9.4",
-    "socket.io": "^4.6.1"
+    "socket.io": "^4.8.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
