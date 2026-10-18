@@ -66,6 +66,23 @@ async function priceCart({ user, items, orderType }) {
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, status: 400, message: 'Cart is empty' };
   }
+  if (items.length > 50) {
+    return { ok: false, status: 400, message: 'A checkout can contain at most 50 cart lines.' };
+  }
+  if (orderType != null && !['takeaway', 'hostel'].includes(orderType)) {
+    return { ok: false, status: 400, message: 'Invalid order type.' };
+  }
+  for (const item of items) {
+    if (!item || typeof item.menuItemId !== 'string' || !/^[a-f0-9]{24}$/i.test(item.menuItemId)) {
+      return { ok: false, status: 400, message: 'Cart contains an invalid menu item.' };
+    }
+    if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 20) {
+      return { ok: false, status: 400, message: 'Each item quantity must be a whole number between 1 and 20.' };
+    }
+    if (item.forProductName != null && (typeof item.forProductName !== 'string' || item.forProductName.length > 100)) {
+      return { ok: false, status: 400, message: 'Invalid add-on product reference.' };
+    }
+  }
 
   const type = orderType === 'takeaway' ? 'takeaway' : 'hostel';
 
