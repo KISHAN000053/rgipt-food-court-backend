@@ -1,17 +1,29 @@
 # Campus Food Court — Backend
 
-A Node.js/Express API for a campus food-ordering platform, with MongoDB persistence, Google OAuth, role-based dashboards, Razorpay payment integration, push notifications, and Socket.IO updates.
+A Node.js/Express API for campus food ordering, with MongoDB persistence, Google OAuth, role-based dashboards, Razorpay payment integration, push notifications, and Socket.IO updates.
 
 **Frontend:** https://github.com/KISHAN000053/rgipt-food-court-frontend
 
-> **Important:** This codebase currently defaults to the RGIPT email domain for sign-in. Configure `ALLOWED_EMAIL_DOMAINS` for another campus. It is a starting point for campus-specific deployments, not a zero-configuration multi-tenant product.
+> **Important:** Sign-in defaults to the RGIPT email domain for backward compatibility. Set `ALLOWED_EMAIL_DOMAINS` for another campus. This is a campus-specific deployment starter, not a zero-configuration multi-tenant product.
+
+## Architecture
+
+```mermaid
+flowchart TD
+  Client[React Frontend] --> API[Express REST API]
+  Client <-->|Live order events| WS[Socket.IO]
+  API --> Auth[Google OAuth + JWT]
+  API --> DB[(MongoDB / Mongoose)]
+  API --> Payment[Razorpay]
+  API --> Push[Web Push]
+```
 
 ## Stack
 
 - Node.js + Express
 - MongoDB + Mongoose
 - Google OAuth 2.0 via Passport
-- JWT authentication in an HTTP-only cookie
+- JWT authentication in an HTTP-only cookie, with bearer-token fallback
 - Socket.IO
 - Razorpay
 - web-push
@@ -32,7 +44,7 @@ npm install
 cp .env.example .env
 ```
 
-Fill in `.env` with local development values before starting the server. Then run:
+Fill in `.env` with local development values before starting the server:
 
 ```bash
 npm run dev
@@ -46,13 +58,14 @@ For a production-style run:
 npm start
 ```
 
-The only seed script currently exposed in `package.json` is:
+### Seed scripts
 
-```bash
-npm run seed
-```
+These scripts modify the database, so inspect the script and confirm `MONGODB_URI` points to the intended database before running them.
 
-**Warning:** inspect the seed script and models before running against any database; seeding can create or change records. Do not run seed scripts against production data without a backup and understanding their behavior.
+- `npm run seed:hostels` — adds the example RGIPT hostel records. Edit `scripts/seedHostels.js` for your campus first.
+- `npm run seed:shop5-addons` — legacy, campus-specific add-on migration for a shop matching “witcher burrito”. Do **not** run it on another campus unless you have deliberately adapted it.
+
+There is no general-purpose shop/menu seed script in this repository.
 
 ## Environment variables
 
@@ -104,9 +117,9 @@ Additional admin, payment, hostel, settings, push, and owner endpoints are mount
 
 ## Reuse for another campus
 
-This repository is **not yet campus-agnostic by configuration alone**. Before using it for another institution:
-1. Set `ALLOWED_EMAIL_DOMAINS` to the intended campus email domain(s), separated by commas.
-2. Review all campus names, hostel/room assumptions, seed data, and campus-specific scripts.
+Before using this for another institution:
+1. Set `ALLOWED_EMAIL_DOMAINS` to the intended campus domain(s), separated by commas.
+2. Review campus names, hostel/room assumptions, seed data, and campus-specific scripts.
 3. Configure the OAuth consent screen, callback URL, frontend origin, and administrator accounts.
 4. Review role checks, ownership checks, request validation, rate limits, and payment-webhook verification.
 5. Test student, shop-owner, and admin permissions with separate accounts.
@@ -124,4 +137,4 @@ This repository is **not yet campus-agnostic by configuration alone**. Before us
 
 ## License and commercial use
 
-This repository includes an MIT license, which permits commercial use, modification, and redistribution subject to its terms. Third-party libraries, payment providers, Google OAuth, and any images/fonts/assets have their own terms. The license does not certify production readiness or compliance with a campus's policies.
+This repository includes an MIT license, permitting commercial use, modification, and redistribution subject to its terms. Third-party libraries, payment providers, Google OAuth, and images/fonts/assets have their own terms. The license does not certify production readiness or compliance with a campus's policies.
