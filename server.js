@@ -153,7 +153,7 @@ if (isProduction) {
     console.error('Replace placeholder Google OAuth credentials before production deployment.');
     process.exit(1);
   }
-  if (/^mongodb:\/\/(localhost|127\\.0\\.0\\.1)(:|\/|$)/i.test(process.env.MONGODB_URI)) {
+  if (/^mongodb:\/\/localhost/i.test(process.env.MONGODB_URI) || /^mongodb:\/\/127\.0\.0\.1/i.test(process.env.MONGODB_URI)) {
     console.error('MONGODB_URI must point to a reachable production database, not localhost.');
     process.exit(1);
   }
