@@ -58,6 +58,8 @@ For a production-style run:
 npm start
 ```
 
+Run the automated unit tests with `npm test`. These are focused checks for cart input validation and order-state rules; they do not replace end-to-end testing.
+
 ### Seed scripts
 
 These scripts modify the database, so inspect the script and confirm `MONGODB_URI` points to the intended database before running them.
@@ -83,6 +85,11 @@ There is no general-purpose shop/menu seed script in this repository.
 | `NODE_ENV` | Set to `production` for production cookie behavior |
 
 Payment and push-notification routes may require additional provider-specific variables. Inspect the relevant route/service files and configure those values in your hosting provider's secret manager; never put real secrets in README files or commit them to Git.
+
+## Detailed guides
+
+- [API reference](docs/API.md) — endpoint map, access levels, payment flow, and Socket.IO events.
+- [Operations and deployment](docs/OPERATIONS.md) — environment setup, Render deployment, campus reuse, and security operations.
 
 ## API overview
 
