@@ -143,6 +143,10 @@ Before using this for another institution:
 - Validate webhook signatures and never trust payment success reported by the client.
 - Back up the database before migrations or seed operations.
 
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and [SECURITY.md](SECURITY.md) for vulnerability reporting and secret-rotation guidance.
+
 ## License and commercial use
 
 This repository includes an MIT license, permitting commercial use, modification, and redistribution subject to its terms. Third-party libraries, payment providers, Google OAuth, and images/fonts/assets have their own terms. The license does not certify production readiness or compliance with a campus's policies.
